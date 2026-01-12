@@ -156,10 +156,4 @@ pip install -e ml-sharp/
 2. 运行完整流程：
 ```bash
 ./run_sharp.sh
-```
-
-3. 若你确实需要 CI 在 GitHub 上运行完整集成（包含全部 heavy deps），建议：
-- 使用自托管 runner（有足够磁盘与 GPU 支持），或  
-- 构建并使用包含所有依赖的预构建 Docker 镜像（推到 ghcr.io 或 Docker Hub），然后在 workflow 中使用 `container:` 指令运行测试。
-
-如果你希望我为你将这些变更推送到远端并触发一次 Actions，我可以立即 push 并监控运行日志，或按你的要求先不推送。请回复“请 push”或“先不 push”。  
+```  
