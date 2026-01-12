@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11"]
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Set up conda
+      uses: conda-incubator/setup-miniconda@v3
+      with:
+        auto-update-conda: true
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache conda dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/conda_pkgs_dir
+          ${{ env.CONDA }}/envs/test-env-${{ matrix.python-version }}
+        key: ${{ runner.os }}-conda-${{ matrix.python-version }}-${{ hashFiles('**/requirements.txt', '**/pyproject.toml', '**/requirements.in') }}
+        restore-keys: |
+          ${{ runner.os }}-conda-${{ matrix.python-version }}-
+          ${{ runner.os }}-conda-
+
+    - name: Install dependencies
+      run: |
+        conda install -c conda-forge open3d>=0.17.0 -y
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -e ml-sharp/
+
+    - name: Create required directories
+      run: |
+        mkdir -p inputs/input_images
+        mkdir -p outputs/output_gaussians
+        mkdir -p models
+
+    - name: Basic syntax and import check
+      run: |
+        # Check Python syntax for all Python files
+        find . -name "*.py" -not -path "./venv/*" -not -path "./ml-sharp/*" -exec python -m py_compile {} \;
+
+        # Test basic imports
+        python -c "import sys; sys.path.insert(0, 'src'); import aylm; print('✅ Main package imports successfully')"
+        python -c "import scripts.coordinate_utils; print('✅ coordinate_utils imports successfully')"
+        python -c "import scripts.pointcloud_voxelizer; print('✅ pointcloud_voxelizer imports successfully')"
+        python -c "import scripts.preload_sharp_model; print('✅ preload_sharp_model imports successfully')"
+
+    - name: Test script functionality
+      run: |
+        # Test help commands
+        python scripts/preload_sharp_model.py --help || exit 1
+        python scripts/pointcloud_voxelizer.py --help || exit 1
+        python scripts/coordinate_utils.py --help 2>/dev/null || echo "coordinate_utils may not have help"
+
+        # Test CLI entry points
+        python -m aylm.cli --help || exit 1
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.9"
+
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+
+    - name: Build package
+      run: python -m build
+
+    - name: Check package
+      run: |
+        python -m twine check dist/*
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: dist
+        path: dist/

@@ -1,0 +1,45 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "A.YLM: Single-Image 3D Reconstruction and Intelligent Navigation System"
+authors:
+  - family-names: "TRIP"
+    given-names: "appergb"
+    orcid: "https://orcid.org/0000-0000-0000-0000"
+repository-code: "https://github.com/appergb/A.YLM"
+url: "https://github.com/appergb/A.YLM"
+license: MIT
+preferred-citation:
+  type: software
+  title: "A.YLM: Single-Image 3D Reconstruction and Intelligent Navigation System"
+  authors:
+    - family-names: "TRIP"
+      given-names: "appergb"
+  repository-code: "https://github.com/appergb/A.YLM"
+  year: 2026
+  license: MIT
+  doi: "10.5281/zenodo.XXXXXXX"  # 如果有DOI，请替换
+keywords:
+  - "3D Reconstruction"
+  - "Computer Vision"
+  - "Deep Learning"
+  - "Navigation"
+  - "Point Cloud"
+  - "Gaussian Splatting"
+  - "SLAM"
+  - "Intelligent Systems"
+  - "Robotics"
+abstract: |
+  A.YLM is an end-to-end 3D environment reconstruction and processing system
+  that generates navigation-ready voxel data from single RGB images. The system
+  seamlessly integrates Apple's latest SHARP (Single-image High-Accuracy Real-time
+  Parallax) model with custom-developed enhanced voxelization algorithms, providing
+  a complete solution from image input to executable path planning data.
+
+  Key features include:
+  - Single-image high-accuracy 3D reconstruction using Vision Transformers
+  - Enhanced ground detection and processing with material recognition
+  - High-precision voxelization (1cm resolution) optimized for navigation
+  - Support for 95+ image formats including professional RAW
+  - Real-time processing with GPU acceleration (<1 second per image)
+  - Coordinate system conversion for intelligent device navigation

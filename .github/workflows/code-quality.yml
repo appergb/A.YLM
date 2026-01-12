@@ -1,0 +1,63 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.9"
+
+    - name: Set up conda
+      uses: conda-incubator/setup-miniconda@v3
+      with:
+        auto-update-conda: true
+        python-version: "3.9"
+
+    - name: Cache conda dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/conda_pkgs_dir
+          ${{ env.CONDA }}/envs/quality-env
+        key: ${{ runner.os }}-conda-quality-${{ hashFiles('**/requirements.txt', '**/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-conda-quality-
+
+    - name: Install quality tools
+      run: |
+        conda install -c conda-forge open3d>=0.17.0 -y
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -e ml-sharp/
+        pip install black isort flake8 mypy pre-commit safety pip-licenses ruff
+
+    - name: Run pre-commit hooks
+      run: |
+        # Install pre-commit dependencies first
+        pre-commit install-hooks
+        # Run pre-commit on all files
+        pre-commit run --all-files --show-diff-on-failure
+
+    - name: Run Ruff linting
+      run: |
+        ruff check --config pyproject.toml src/ scripts/
+        ruff format --check --config pyproject.toml src/ scripts/
+
+    - name: Check security issues
+      run: safety check
+
+    - name: Generate dependency report
+      run: pip-licenses --format=markdown --output-file=DEPENDENCY_REPORT.md

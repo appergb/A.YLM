@@ -1,0 +1,58 @@
+name: Model Download Test
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run weekly to ensure model URLs are still valid
+    - cron: '0 0 * * 0'
+
+jobs:
+  test-model-download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Test model URL accessibility
+      run: |
+        MODEL_URL="https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt"
+        echo "Testing model URL: $MODEL_URL"
+
+        # Test if URL is accessible
+        if curl --output /dev/null --silent --head --fail "$MODEL_URL"; then
+          echo "✅ Model URL is accessible"
+        else
+          echo "❌ Model URL is not accessible"
+          exit 1
+        fi
+
+    - name: Test model download (small portion)
+      run: |
+        MODEL_URL="https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt"
+
+        # Download just the first 1MB to test
+        if curl -r 0-1048576 --fail --silent "$MODEL_URL" | head -c 1024 > /dev/null; then
+          echo "✅ Model download test passed"
+        else
+          echo "❌ Model download test failed"
+          exit 1
+        fi
+
+    - name: Verify model file structure
+      run: |
+        # Create models directory
+        mkdir -p models
+
+        # Download full model for structure verification
+        echo "Downloading model for structure verification..."
+        curl -L -o models/sharp_2572gikvuh.pt "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt"
+
+        # Check if file exists and has content
+        if [ -f "models/sharp_2572gikvuh.pt" ] && [ -s "models/sharp_2572gikvuh.pt" ]; then
+          echo "✅ Model file downloaded successfully"
+          ls -lh models/sharp_2572gikvuh.pt
+        else
+          echo "❌ Model file download failed or file is empty"
+          exit 1
+        fi
