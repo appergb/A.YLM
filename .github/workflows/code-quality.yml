@@ -20,7 +20,7 @@ jobs:
       with:
         python-version: "3.9"
 
-    - name: Set up conda
+    - name: Set up conda (optional)
       uses: conda-incubator/setup-miniconda@v3
       with:
         auto-update-conda: true
@@ -32,16 +32,15 @@ jobs:
         path: |
           ~/conda_pkgs_dir
           ${{ env.CONDA }}/envs/quality-env
-        key: ${{ runner.os }}-conda-quality-${{ hashFiles('**/requirements.txt', '**/pyproject.toml') }}
+        key: ${{ runner.os }}-conda-quality-${{ hashFiles('**/.pre-commit-config.yaml', '**/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-conda-quality-
 
-    - name: Install quality tools
+    - name: Install quality tools (lightweight)
       run: |
-        conda install -c conda-forge open3d>=0.17.0 -y
+        # For code-quality checks we only need formatting/linting/typecheck tools.
+        # Avoid installing heavy runtime dependencies (torch, open3d, ml-sharp) to prevent disk exhaustion.
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -e ml-sharp/
         pip install black isort flake8 mypy pre-commit safety pip-licenses ruff
 
     - name: Run pre-commit hooks

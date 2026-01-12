@@ -9,14 +9,39 @@
 # 个人研发项目
 
 set -e  # 遇到错误立即退出
+#
+# 启动日志与缓存清理策略:
+# 1) 启动时删除旧的日志文件（保留本次运行日志）。
+# 2) 将当前运行输出写入时间戳日志文件（保存在 $OUTPUT_DIR/logs）。
+# 3) 运行完成后清理临时文件与包缓存（但保留本次运行日志以供排查）。
 
-# 激活虚拟环境
+# 激活虚拟环境并设置日志
 if [ -f "venv/bin/activate" ]; then
     source venv/bin/activate
     echo "已激活Python虚拟环境 ($(python3 --version))"
 else
     echo "警告: 未找到虚拟环境，请确保已正确安装依赖"
 fi
+
+# 确保基础路径变量已定义（防止 OUTPUT_DIR 在此之前未设置）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OUTPUT_DIR="${OUTPUT_DIR:-$SCRIPT_DIR/outputs/output_gaussians}"
+mkdir -p "$OUTPUT_DIR"
+
+# 日志目录与当前运行日志文件
+LOG_DIR="${OUTPUT_DIR}/logs"
+mkdir -p "$LOG_DIR"
+
+# 启动时清理旧日志（保留当前运行日志目录结构）
+if [ -d "$LOG_DIR" ]; then
+    rm -f "$LOG_DIR"/*.log || true
+fi
+
+TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+LOG_FILE="$LOG_DIR/run_$TIMESTAMP.log"
+
+# 将后续 stdout/stderr 写入日志文件，同时保留控制台输出
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 # 配置参数（支持环境变量覆盖）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -349,7 +374,47 @@ cleanup_temp_files() {
     print_step "9" "清理临时文件..."
 
     # 可以在这里添加清理逻辑
-    echo -e "清理完成"
+    # 只删除缓存和临时文件，保留正式结果（*.ply、cropped_pointclouds、voxelized_outputs、logs）
+    if [ -d "$OUTPUT_DIR" ]; then
+        for entry in "$OUTPUT_DIR"/*; do
+            # skip if no matches
+            [ -e "$entry" ] || continue
+
+            base="$(basename "$entry")"
+
+            # Preserve logs directory, voxelized outputs, cropped pointclouds, and any .ply files at top level
+            if [ "$base" = "logs" ] || [ "$base" = "voxelized_outputs" ] || [ "$base" = "cropped_pointclouds" ]; then
+                continue
+            fi
+
+            if [ -f "$entry" ]; then
+                case "$entry" in
+                    *.ply) continue ;;
+                esac
+            fi
+
+            # Otherwise remove (these are considered cache / intermediates)
+            rm -rf "$entry" || true
+        done
+    fi
+
+    # 清理 pip 缓存（如有权限）
+    if command -v pip >/dev/null 2>&1; then
+        pip cache purge || true
+    fi
+
+    # 如果存在 conda，尝试清理 conda 缓存以释放空间
+    if command -v conda >/dev/null 2>&1; then
+        conda clean --all -y || true
+    fi
+
+    # 清理 /tmp 下本脚本可能产生的临时文件（保守删除）
+    if [ -d "/tmp" ]; then
+        # 仅删除本脚本可能创建的临时文件（以 run_sharp 或 aylm 前缀为准）
+        find /tmp -maxdepth 1 -type f \( -name "run_sharp*" -o -name "aylm*" \) -exec rm -f {} \; || true
+    fi
+
+    echo -e "清理完成（保留日志: $LOG_FILE）"
 }
 
 main() {
