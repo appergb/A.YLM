@@ -130,7 +130,9 @@ class PointCloudVoxelizer:
             if len(points) == 0:
                 return pcd
 
-            self.logger.info(f"开始局部区域裁剪... 距离阈值: {max_distance}m, 前向轴: {front_axis}")
+            self.logger.info(
+                f"开始局部区域裁剪... 距离阈值: {max_distance}m, 前向轴: {front_axis}"
+            )
 
             # 1. 距离约束：计算到原点的距离（摄像头位置）
             distances_squared = np.sum(points**2, axis=1)
@@ -140,7 +142,9 @@ class PointCloudVoxelizer:
                 sorted_distances = np.sort(distances_squared)
                 # 计算设定距离对应的点数
                 target_distance_squared = max_distance**2
-                points_within_range = np.sum(sorted_distances <= target_distance_squared)
+                points_within_range = np.sum(
+                    sorted_distances <= target_distance_squared
+                )
 
                 if points_within_range < 10000:  # 如果设定距离内点数太少
                     # 扩大距离以确保至少有10000个点
@@ -217,7 +221,9 @@ class PointCloudVoxelizer:
             pcd_clean, ind = pcd.remove_statistical_outlier(
                 nb_neighbors=nb_neighbors, std_ratio=std_ratio
             )
-            self.logger.info(f"去噪完成: {len(pcd.points)} -> {len(pcd_clean.points)} 点")
+            self.logger.info(
+                f"去噪完成: {len(pcd.points)} -> {len(pcd_clean.points)} 点"
+            )
             return pcd_clean
         except Exception as e:
             self.logger.warning(f"去噪失败，使用原始点云: {str(e)}")
@@ -265,7 +271,9 @@ class PointCloudVoxelizer:
                 return pcd, {"success": False, "error": "RANSAC检测失败"}
 
             [a, b, c, d] = best_plane_model
-            inlier_ratio = len(best_inliers) / len(pcd.points) if best_inliers is not None else 0.0
+            inlier_ratio = (
+                len(best_inliers) / len(pcd.points) if best_inliers is not None else 0.0
+            )
 
             # 2. 地面质量评估
             normal = np.array([a, b, c])
@@ -274,7 +282,9 @@ class PointCloudVoxelizer:
             # 计算地面倾斜角度（与水平面的夹角）
             ground_angle = np.degrees(np.arccos(np.abs(np.dot(normal, [0, 0, 1]))))
 
-            self.logger.info(f"地面法向量: [{normal[0]:.4f}, {normal[1]:.4f}, {normal[2]:.4f}]")
+            self.logger.info(
+                f"地面法向量: [{normal[0]:.4f}, {normal[1]:.4f}, {normal[2]:.4f}]"
+            )
             self.logger.info(f"内点比例: {inlier_ratio:.2%}")
             self.logger.info(f"地面倾斜角度: {ground_angle:.1f}°")
 
@@ -332,9 +342,13 @@ class PointCloudVoxelizer:
                 pcd_corrected = pcd.rotate(R, center=center)
 
                 # 6. 验证校正结果
-                verification_result = self._verify_ground_correction(pcd_corrected, quality_info)
+                verification_result = self._verify_ground_correction(
+                    pcd_corrected, quality_info
+                )
                 if not verification_result["valid"]:
-                    self.logger.warning(f"校正结果验证失败: {verification_result['reason']}")
+                    self.logger.warning(
+                        f"校正结果验证失败: {verification_result['reason']}"
+                    )
                     return pcd, {
                         **quality_info,
                         "success": False,
@@ -349,7 +363,9 @@ class PointCloudVoxelizer:
                 }
 
             except Exception as rotation_error:
-                self.logger.warning(f"旋转操作失败，使用原始点云: {str(rotation_error)}")
+                self.logger.warning(
+                    f"旋转操作失败，使用原始点云: {str(rotation_error)}"
+                )
                 return pcd, {
                     **quality_info,
                     "success": False,
@@ -416,13 +432,17 @@ class PointCloudVoxelizer:
 
         # 检查地面倾斜角度
         if ground_angle > max_ground_angle:
-            error_msg = f"地面倾斜角度过大: {ground_angle:.1f}° > {max_ground_angle:.1f}°"
+            error_msg = (
+                f"地面倾斜角度过大: {ground_angle:.1f}° > {max_ground_angle:.1f}°"
+            )
             self.logger.warning(error_msg)
             return False, error_msg
 
         return True, None
 
-    def _compute_rotation_matrix(self, rot_axis: np.ndarray, rot_angle: float) -> o3d.core.Tensor:
+    def _compute_rotation_matrix(
+        self, rot_axis: np.ndarray, rot_angle: float
+    ) -> o3d.core.Tensor:
         """计算旋转矩阵 - 使用Open3D核心Tensor API.
 
         Args:
@@ -469,7 +489,9 @@ class PointCloudVoxelizer:
             self.logger.warning(f"矩阵正交化失败: {str(e)}")
             return np.eye(3)
 
-    def _verify_ground_correction(self, pcd: o3d.geometry.PointCloud, original_info: dict) -> dict:
+    def _verify_ground_correction(
+        self, pcd: o3d.geometry.PointCloud, original_info: dict
+    ) -> dict:
         """验证地面校正结果.
 
         Args:
@@ -491,7 +513,9 @@ class PointCloudVoxelizer:
             ground_angle = np.degrees(np.arccos(np.abs(np.dot(normal, [0, 0, 1]))))
 
             # 验证标准
-            angle_improved = ground_angle < original_info["ground_angle"] * 0.8  # 角度改善至少20%
+            angle_improved = (
+                ground_angle < original_info["ground_angle"] * 0.8
+            )  # 角度改善至少20%
             inliers_preserved = (
                 inlier_ratio > original_info["inlier_ratio"] * 0.9
             )  # 内点数保持90%以上
@@ -705,7 +729,9 @@ class PointCloudVoxelizer:
                         [-axis[1], axis[0], 0],
                     ]
                 )
-                rotation_matrix = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * K @ K
+                rotation_matrix = (
+                    np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * K @ K
+                )
 
             # 应用旋转变换
             rotated_points = points @ rotation_matrix.T
@@ -757,7 +783,9 @@ class PointCloudVoxelizer:
             ground_voxels = leveled_centers[ground_mask]
 
             # 智能凹陷检测和填充
-            filled_count = self._intelligent_ground_leveling(ground_voxels, ground_height)
+            filled_count = self._intelligent_ground_leveling(
+                ground_voxels, ground_height
+            )
 
             self.logger.info(
                 f"智能地面平整: 检测到 {len(ground_voxels)} 个地面体素，"
@@ -896,7 +924,9 @@ class PointCloudVoxelizer:
 
             # 找出地面体素（Y坐标接近ground_height）
             ground_tolerance = 0.01  # 1cm容差
-            ground_mask = np.abs(voxel_centers[:, 1] - ground_height) <= ground_tolerance
+            ground_mask = (
+                np.abs(voxel_centers[:, 1] - ground_height) <= ground_tolerance
+            )
 
             if np.any(ground_mask):
                 ground_voxels = textured_centers[ground_mask]
@@ -920,7 +950,8 @@ class PointCloudVoxelizer:
 
                 # 应用噪声到Y坐标（轻微的起伏）
                 noise_y = 0.002 * (
-                    np.sin(x_coords / texture_scale * 2) + np.cos(z_coords / texture_scale * 2)
+                    np.sin(x_coords / texture_scale * 2)
+                    + np.cos(z_coords / texture_scale * 2)
                 )
 
                 # 应用噪声
@@ -928,7 +959,9 @@ class PointCloudVoxelizer:
                 textured_centers[ground_mask, 1] += noise_y
                 textured_centers[ground_mask, 2] += noise_z
 
-                self.logger.info(f"地面纹理: 为 {np.sum(ground_mask)} 个体素添加了噪声纹理")
+                self.logger.info(
+                    f"地面纹理: 为 {np.sum(ground_mask)} 个体素添加了噪声纹理"
+                )
 
             return textured_centers
 
@@ -972,7 +1005,9 @@ class PointCloudVoxelizer:
             density = len(ground_points) / max(area, 1.0)
 
             # 3. 计算Y坐标的变异系数
-            cv_y = np.std(ground_points[:, 1]) / max(np.mean(ground_points[:, 1]), 0.001)
+            cv_y = np.std(ground_points[:, 1]) / max(
+                np.mean(ground_points[:, 1]), 0.001
+            )
 
             # 基于特征识别材质
             if density > 1000 and cv_y < 0.01:
@@ -1035,7 +1070,9 @@ class PointCloudVoxelizer:
 
                 # 坐标系转换（Y轴垂直于地面）
                 if ground_plane is not None:
-                    pcd_transformed = self.convert_to_ground_coordinate_system(pcd, ground_plane)
+                    pcd_transformed = self.convert_to_ground_coordinate_system(
+                        pcd, ground_plane
+                    )
                     points = np.asarray(pcd_transformed.points)
                 else:
                     points = np.asarray(pcd.points)
@@ -1057,7 +1094,9 @@ class PointCloudVoxelizer:
 
                 # 地面平整处理
                 if ground_leveling and ground_plane is not None:
-                    voxel_centers = self.level_ground_voxels(voxel_centers, ground_height=0.0)
+                    voxel_centers = self.level_ground_voxels(
+                        voxel_centers, ground_height=0.0
+                    )
 
                 # 纹理噪声处理
                 if texture_noise and ground_plane is not None:
@@ -1091,7 +1130,9 @@ class PointCloudVoxelizer:
                 # 标准体素下采样
                 pcd_voxelized = pcd.voxel_down_sample(voxel_size=self.voxel_size)
 
-            self.logger.info(f"体素化完成: {len(pcd.points)} -> {len(pcd_voxelized.points)} 点")
+            self.logger.info(
+                f"体素化完成: {len(pcd.points)} -> {len(pcd_voxelized.points)} 点"
+            )
 
             return pcd_voxelized
 
@@ -1122,7 +1163,9 @@ class PointCloudVoxelizer:
                 # 保存为ASCII格式的PLY文件，更好的兼容性
                 success = o3d.io.write_point_cloud(output_path, pcd, write_ascii=True)
                 if success:
-                    self.logger.info(f"PLY文件已保存为ASCII格式以提高兼容性: {output_path}")
+                    self.logger.info(
+                        f"PLY文件已保存为ASCII格式以提高兼容性: {output_path}"
+                    )
             elif format_type == "pcd":
                 success = o3d.io.write_point_cloud(output_path, pcd)
             elif format_type == "xyz":
@@ -1172,7 +1215,9 @@ class PointCloudVoxelizer:
                     pcd, voxel_size=voxel_size
                 )
                 vis_list.append(voxel_grid)
-                self.logger.info(f"创建体素网格可视化: {len(voxel_grid.get_voxels())} 个体素")
+                self.logger.info(
+                    f"创建体素网格可视化: {len(voxel_grid.get_voxels())} 个体素"
+                )
             else:
                 vis_list.append(pcd)
 
@@ -1218,7 +1263,9 @@ class PointCloudVoxelizer:
             "bbox_size": bbox_max - bbox_min,
             "volume": np.prod(bbox_max - bbox_min),
             "voxel_size": self.voxel_size,
-            "estimated_voxels": np.prod(np.ceil((bbox_max - bbox_min) / self.voxel_size)),
+            "estimated_voxels": np.prod(
+                np.ceil((bbox_max - bbox_min) / self.voxel_size)
+            ),
         }
 
         return stats
@@ -1280,7 +1327,9 @@ class PointCloudVoxelizer:
 
                 # 保存裁剪后的中间结果
                 if save_intermediate:
-                    intermediate_path = Path(intermediate_dir) / f"cropped_{Path(input_path).name}"
+                    intermediate_path = (
+                        Path(intermediate_dir) / f"cropped_{Path(input_path).name}"
+                    )
                     Path(intermediate_dir).mkdir(parents=True, exist_ok=True)
                     success_intermediate = self.save_pointcloud(
                         pcd, str(intermediate_path), output_format
@@ -1311,7 +1360,9 @@ class PointCloudVoxelizer:
                     else:
                         self.logger.info("地面已水平，无需校正")
                 else:
-                    self.logger.warning(f"地面校正失败: {ground_result.get('error', '未知错误')}")
+                    self.logger.warning(
+                        f"地面校正失败: {ground_result.get('error', '未知错误')}"
+                    )
 
             # 4. 去噪（可选）
             if remove_noise_flag:
@@ -1324,7 +1375,9 @@ class PointCloudVoxelizer:
                     plane_model, inliers = self.detect_ground_plane(pcd)
                     if len(inliers) > len(pcd.points) * 0.1:  # 内点占比超过10%
                         # 临时跳过旋转功能，因为Open3D在macOS上有兼容性问题
-                        self.logger.info("检测到地面平面，但暂时跳过旋转对齐（兼容性问题）")
+                        self.logger.info(
+                            "检测到地面平面，但暂时跳过旋转对齐（兼容性问题）"
+                        )
                         # pcd = self.align_to_ground(pcd, plane_model)
                         # ground_aligned = True
                     else:
@@ -1333,7 +1386,9 @@ class PointCloudVoxelizer:
                     self.logger.warning(f"地面对齐失败，使用原始方向: {str(e)}")
 
             # 4. 体素化
-            pcd_voxelized = self.voxelize(pcd, create_regular_grid, ground_leveling, texture_noise)
+            pcd_voxelized = self.voxelize(
+                pcd, create_regular_grid, ground_leveling, texture_noise
+            )
 
             # 5. 保存结果
             success = self.save_pointcloud(pcd_voxelized, output_path, output_format)
@@ -1451,7 +1506,9 @@ def main():
         default=0.005,
         help="体素尺寸（米），默认0.005（5mm）",
     )
-    parser.add_argument("--batch", action="store_true", help="批量处理模式（输入为目录）")
+    parser.add_argument(
+        "--batch", action="store_true", help="批量处理模式（输入为目录）"
+    )
     parser.add_argument("--no-noise-removal", action="store_true", help="禁用噪声去除")
     parser.add_argument("--no-ground-align", action="store_true", help="禁用地面对齐")
     parser.add_argument(
@@ -1501,8 +1558,12 @@ def main():
         action="store_true",
         help="强制使用增强版地面检测（即使不是路径规划模式）",
     )
-    parser.add_argument("--no-ground-leveling", action="store_true", help="禁用地面体素平整处理")
-    parser.add_argument("--no-texture-noise", action="store_true", help="禁用地面纹理噪声")
+    parser.add_argument(
+        "--no-ground-leveling", action="store_true", help="禁用地面体素平整处理"
+    )
+    parser.add_argument(
+        "--no-texture-noise", action="store_true", help="禁用地面纹理噪声"
+    )
 
     args = parser.parse_args()
 
@@ -1570,7 +1631,9 @@ def main():
         # 单文件处理
         if not args.output:
             if args.local_planning:
-                args.output = f"{voxelized_dir}/voxelized_{os.path.basename(args.input)}"
+                args.output = (
+                    f"{voxelized_dir}/voxelized_{os.path.basename(args.input)}"
+                )
             else:
                 input_path = Path(args.input)
                 args.output = str(input_path.parent / f"voxelized_{input_path.name}")
