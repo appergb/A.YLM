@@ -229,7 +229,7 @@ ruff check src/aylm tests
 
 ---
 
-**作者**: TRIP(appergb)  
+**作者**: TRIP(appergb)
 **项目状态**: 生产就绪
 
 **Developer**: TRIP (appergb)
