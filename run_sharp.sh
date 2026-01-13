@@ -46,7 +46,7 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 # 配置参数（支持环境变量覆盖）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHARP_DIR="$SCRIPT_DIR/ml-sharp"
-VOXELIZER_SCRIPT="$SCRIPT_DIR/scripts/pointcloud_voxelizer.py"
+VOXELIZER_SCRIPT="$SCRIPT_DIR/src/aylm/tools/pointcloud_voxelizer.py"
 INPUT_DIR="${INPUT_DIR:-$SCRIPT_DIR/inputs/input_images}"
 OUTPUT_DIR="${OUTPUT_DIR:-$SCRIPT_DIR/outputs/output_gaussians}"
 CHECKPOINT_URL="https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt"
@@ -299,7 +299,7 @@ run_voxelization() {
             echo -e "正在处理: $(basename "$ply_file")"
 
             # 使用局部路径规划模式进行体素化
-            python3 "$VOXELIZER_SCRIPT" "$ply_file" --local-planning
+            "$VIRTUAL_ENV/bin/python3" "$VOXELIZER_SCRIPT" "$ply_file" --local-planning
 
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}$(basename "$ply_file") 体素化完成${NC}"
