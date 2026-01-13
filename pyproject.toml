@@ -89,3 +89,7 @@ target-version = "py39"
 [tool.ruff.lint]
 select = ["E", "F"]
 ignore = []
+
+[tool.isort]
+profile = "black"
+line_length = 88
