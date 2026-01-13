@@ -24,9 +24,7 @@ def load_ply_gaussians(ply_path):
     # 提取顶点数据
     vertices = plydata["vertex"]
     positions = np.vstack([vertices["x"], vertices["y"], vertices["z"]]).T
-    scales = np.vstack(
-        [vertices["scale_0"], vertices["scale_1"], vertices["scale_2"]]
-    ).T
+    scales = np.vstack([vertices["scale_0"], vertices["scale_1"], vertices["scale_2"]]).T
     rotations = np.vstack(
         [vertices["rot_0"], vertices["rot_1"], vertices["rot_2"], vertices["rot_3"]]
     ).T
