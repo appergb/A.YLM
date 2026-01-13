@@ -77,7 +77,9 @@ def undistort_image(image_path, camera_params, output_path):
 
     # 计算去畸变映射
     new_K, roi = cv2.getOptimalNewCameraMatrix(K, dist_coeffs, (w, h), 1, (w, h))
-    mapx, mapy = cv2.initUndistortRectifyMap(K, dist_coeffs, None, new_K, (w, h), cv2.CV_32FC1)
+    mapx, mapy = cv2.initUndistortRectifyMap(
+        K, dist_coeffs, None, new_K, (w, h), cv2.CV_32FC1
+    )
 
     # 应用去畸变
     undistorted = cv2.remap(img, mapx, mapy, cv2.INTER_LINEAR)
@@ -195,7 +197,9 @@ def calibrate_from_images(image_dir, pattern_size=(9, 6), square_size=1.0):
 
     # 相机校准
     h, w = gray.shape[:2]
-    ret, K, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, (w, h), None, None)
+    ret, K, dist, rvecs, tvecs = cv2.calibrateCamera(
+        objpoints, imgpoints, (w, h), None, None
+    )
 
     if ret:
         print("相机校准成功!")
@@ -236,7 +240,9 @@ def main():
         default=[9, 6],
         help="棋盘格角点数量 (默认: 9 6)",
     )
-    parser.add_argument("--square-size", type=float, default=1.0, help="棋盘格方块大小 (默认: 1.0)")
+    parser.add_argument(
+        "--square-size", type=float, default=1.0, help="棋盘格方块大小 (默认: 1.0)"
+    )
 
     args = parser.parse_args()
 
@@ -245,7 +251,9 @@ def main():
 
     if args.calibrate:
         print("执行相机校准模式...")
-        params = calibrate_from_images(args.input, tuple(args.pattern_size), args.square_size)
+        params = calibrate_from_images(
+            args.input, tuple(args.pattern_size), args.square_size
+        )
         if params:
             # 保存校准结果
             output_path = Path(args.output)

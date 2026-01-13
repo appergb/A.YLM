@@ -1,9 +1,10 @@
 """Integration tests for CLI functionality."""
 
-import pytest
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 
 def test_cli_help():
@@ -13,7 +14,7 @@ def test_cli_help():
             [sys.executable, "-m", "aylm.cli", "--help"],
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=30,
         )
         assert result.returncode == 0
         assert "aylm" in result.stdout.lower()
@@ -25,6 +26,7 @@ def test_cli_imports():
     """Test CLI module imports."""
     try:
         from aylm.cli import main_cli
+
         assert main_cli is not None
     except ImportError as e:
         pytest.skip(f"CLI import failed: {e}")

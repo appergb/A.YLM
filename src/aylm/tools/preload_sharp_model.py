@@ -79,7 +79,9 @@ class SharpModelPreloader:
         self.metadata_file: Optional[str] = None
 
         # 设置日志
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+        logging.basicConfig(
+            level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+        )
         self.logger = logging.getLogger(__name__)
 
     def _get_device(self, device: str) -> str:
@@ -99,7 +101,9 @@ class SharpModelPreloader:
             "loaded": True,
             "device": self.device,
             "checkpoint_path": (
-                str(Path(self.checkpoint_path).resolve()) if self.checkpoint_path else ""
+                str(Path(self.checkpoint_path).resolve())
+                if self.checkpoint_path
+                else ""
             ),
         }
 
@@ -132,7 +136,9 @@ class SharpModelPreloader:
 
             # 加载模型状态字典
             if str(self.checkpoint_path).startswith("http"):
-                state_dict = torch.hub.load_state_dict_from_url(self.checkpoint_path, progress=True)
+                state_dict = torch.hub.load_state_dict_from_url(
+                    self.checkpoint_path, progress=True
+                )
             else:
                 state_dict = torch.load(self.checkpoint_path, weights_only=True)
 
@@ -143,7 +149,9 @@ class SharpModelPreloader:
             self.model.to(self.device)
 
             self.logger.info(f"   模型类型: {type(self.model).__name__}")
-            self.logger.info(f"   模型参数量: {sum(p.numel() for p in self.model.parameters()):,}")
+            self.logger.info(
+                f"   模型参数量: {sum(p.numel() for p in self.model.parameters()):,}"
+            )
 
             self.load_time = time.time() - start_time
             self.loaded = True
