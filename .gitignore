@@ -189,6 +189,9 @@ Thumbs.db
 *.temp
 *.bak
 
+# Miniconda installer (large binary file)
+miniconda.sh
+
 # Log files
 *.log
 logs/
