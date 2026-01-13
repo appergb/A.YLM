@@ -43,6 +43,21 @@ jobs:
         python -m pip install --upgrade pip
         pip install black isort flake8 mypy pre-commit safety pip-licenses ruff
 
+    - name: Run Ruff and produce report
+      run: |
+        # Run ruff checks (no auto-fix) and capture output for review.
+        # We avoid producing auto-fix patches in CI to prevent uploading fix artifacts.
+        ruff check --config pyproject.toml src/ scripts/ tests/ > ruff-report.txt || true
+        ruff format --check --config pyproject.toml src/ scripts/ tests/ >> ruff-report.txt || true
+
+    - name: Upload core reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: core-reports
+        path: |
+          DEPENDENCY_REPORT.md
+          ruff-report.txt
+
     - name: Run pre-commit hooks
       run: |
         # Install pre-commit dependencies first
