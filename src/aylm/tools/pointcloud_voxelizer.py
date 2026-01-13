@@ -158,7 +158,8 @@ class PointCloudVoxelizer:
                         )
                 else:
                     self.logger.info(
-                        f"使用设定距离阈值: {max_distance:.3f}m (范围内有{points_within_range}个点)"
+                        f"使用设定距离阈值: {max_distance:.3f}m "
+                        f"(范围内有{points_within_range}个点)"
                     )
 
             distance_mask = distances_squared <= (max_distance**2)
@@ -335,7 +336,8 @@ class PointCloudVoxelizer:
                 center = np.mean(inlier_points, axis=0)
 
                 self.logger.info(
-                    f"地面校正旋转中心: [{center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f}]"
+                    f"地面校正旋转中心: "
+                    f"[{center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f}]"
                 )
 
                 # 应用旋转
@@ -529,11 +531,13 @@ class PointCloudVoxelizer:
                 reason = []
                 if not angle_improved:
                     reason.append(
-                        f"角度改善不足: {original_info['ground_angle']:.1f}° -> {ground_angle:.1f}°"
+                        f"角度改善不足: {original_info['ground_angle']:.1f}° "
+                        f"-> {ground_angle:.1f}°"
                     )
                 if not inliers_preserved:
                     reason.append(
-                        f"内点比例下降: {original_info['inlier_ratio']:.2%} -> {inlier_ratio:.2%}"
+                        f"内点比例下降: {original_info['inlier_ratio']:.2%} "
+                        f"-> {inlier_ratio:.2%}"
                     )
                 return {"valid": False, "reason": "; ".join(reason)}
 
