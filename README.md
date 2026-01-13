@@ -246,37 +246,72 @@ This project is licensed under the MIT License.
 
 ---
 
-## CI / Automation status — 注意事项
+## CI / 持续集成
 
-当前仓库的 CI 与自动化配置已做过优化以减少 CI 运行时的磁盘与网络占用（例如：将 Open3D 通过 conda 安装、在 code-quality job 中仅安装轻量级的静态检查工具等）。
+项目使用 GitHub Actions 进行持续集成，包含以下检查：
 
-重要说明（请仔细阅读）：
+### CI Jobs
 
-- 本版本**不**触发或不保证执行“完全自动化的端到端流程**（full end-to-end automated pipeline）**”——某些运行时/集成测试需要大型二进制依赖（如 Open3D、PyTorch 的 CUDA 变体或其它 GPU 包），这些在 code-quality 检查阶段被刻意排除以避免 CI 运行失败或磁盘耗尽。
-- 项目致力于维护稳定的 CI 流程。任何 CI 失败都将被及时修复，以确保代码质量和自动化测试的可靠性。
-- 如果你需要强制运行完整集成测试，请在 CI 中使用专门的 integration job、预构建包含所有依赖的 Docker 镜像，或在本地/专用机器上运行完整流程（详见下文的“如何运行完整流程”）。
+- **Code Quality**: 代码格式、linting 和类型检查
+- **Unit Tests**: 单元测试和代码覆盖率
+- **Integration Tests**: 集成测试（需手动触发或添加 `integration-test` 标签）
+- **Cross-platform**: macOS 和 Windows 兼容性测试
 
-如何在本地运行完整流程（建议）：
+### 本地开发
 
-1. 在有足够磁盘与网络权限的机器上创建 conda 环境（推荐）：
-
-```bash
-conda create -n aylm python=3.11 -y
-conda activate aylm
-conda install -c conda-forge -c open3d-admin open3d=0.18.0 numpy scipy plyfile pillow opencv matplotlib -y
-python -m pip install --upgrade pip
-pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision --no-deps
-pip install -r requirements.txt
-pip install -e ml-sharp/
-```
-
-2. 运行完整流程：
+#### 代码质量检查
 
 ```bash
-./run_sharp.sh
+# 安装开发依赖
+pip install -e .[dev]
+
+# 运行代码质量检查
+black --check src/aylm
+isort --check-only src/aylm
+ruff check src/aylm
+mypy src/aylm
 ```
 
-### 若你确实需要 CI 在 GitHub 上运行完整集成（包含全部 heavy deps），建议：
+#### 运行测试
 
-- 使用自托管 runner（有足够磁盘与 GPU 支持），或
-- 构建并使用包含所有依赖的预构建 Docker 镜像（推到 ghcr.io 或 Docker Hub），然后在 workflow 中使用 `container:` 指令运行测试。
+```bash
+# 单元测试
+pytest tests/unit/
+
+# 集成测试
+pytest tests/integration/
+
+# 带覆盖率
+pytest --cov=aylm --cov-report=html
+```
+
+#### 使用预提交钩子
+
+```bash
+# 安装预提交钩子
+pre-commit install
+
+# 手动运行
+pre-commit run --all-files
+```
+
+### CI 环境说明
+
+CI 配置经过优化以处理复杂的依赖关系：
+
+- **PyTorch**: 使用 CPU 版本避免 CUDA 复杂性
+- **Open3D**: 支持 pip 和 conda 安装的 fallback 机制
+- **缓存**: 使用 GitHub Actions 缓存加速依赖安装
+- **分层测试**: 轻量级代码质量检查 + 完整单元测试 + 可选集成测试
+
+### 故障排除
+
+如果 CI 失败：
+
+1. **依赖安装失败**: 检查 `scripts/install_deps.sh` 脚本
+2. **测试失败**: 本地运行 `pytest` 复现问题
+3. **代码质量失败**: 运行 `pre-commit run --all-files` 检查
+
+### 手动触发集成测试
+
+在 Pull Request 上添加 `integration-test` 标签或使用 workflow_dispatch 手动触发。
