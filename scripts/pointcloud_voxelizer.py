@@ -285,7 +285,9 @@ class PointCloudVoxelizer:
             # 计算地面倾斜角度（与水平面的夹角）
             ground_angle = np.degrees(np.arccos(np.abs(np.dot(normal, [0, 0, 1]))))
 
-            self.logger.info(f"地面法向量: [{normal[0]:.4f}, {normal[1]:.4f}, {normal[2]:.4f}]")
+            self.logger.info(
+                f"地面法向量: [{normal[0]:.4f}, {normal[1]:.4f}, {normal[2]:.4f}]"
+            )
             self.logger.info(f"内点比例: {inlier_ratio:.2%}")
             self.logger.info(f"地面倾斜角度: {ground_angle:.1f}°")
 

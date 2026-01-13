@@ -133,14 +133,16 @@ This project is licensed under the MIT License.
 
 ## CI / Automation status — 注意事项
 
-当前仓库的 CI 与自动化配置已做过优化以减少 CI 运行时的磁盘与网络占用（例如：将 Open3D 通过 conda 安装、在 code-quality job 中仅安装轻量级的静态检查工具等）。  
+当前仓库的 CI 与自动化配置已做过优化以减少 CI 运行时的磁盘与网络占用（例如：将 Open3D 通过 conda 安装、在 code-quality job 中仅安装轻量级的静态检查工具等）。
 
 重要说明（请仔细阅读）：
-- 本版本**不**触发或不保证执行“完全自动化的端到端流程**（full end-to-end automated pipeline）**”——某些运行时/集成测试需要大型二进制依赖（如 Open3D、PyTorch 的 CUDA 变体或其它 GPU 包），这些在 code-quality 检查阶段被刻意排除以避免 CI 运行失败或磁盘耗尽。  
-- 因此，GitHub Actions 上部分 workflow 可能被标记为“失败”或“检查未通过/被省略”，这是在减少无意义资源浪费和避免 runner 空间不足的权衡下的预期行为。  
-- 如果你需要强制运行完整集成测试，请在 CI 中使用专门的 integration job、预构建包含所有依赖的 Docker 镜像，或在本地/专用机器上运行完整流程（详见下文的“如何运行完整流程”）。  
+
+- 本版本**不**触发或不保证执行“完全自动化的端到端流程**（full end-to-end automated pipeline）**”——某些运行时/集成测试需要大型二进制依赖（如 Open3D、PyTorch 的 CUDA 变体或其它 GPU 包），这些在 code-quality 检查阶段被刻意排除以避免 CI 运行失败或磁盘耗尽。
+- 项目致力于维护稳定的 CI 流程。任何 CI 失败都将被及时修复，以确保代码质量和自动化测试的可靠性。
+- 如果你需要强制运行完整集成测试，请在 CI 中使用专门的 integration job、预构建包含所有依赖的 Docker 镜像，或在本地/专用机器上运行完整流程（详见下文的“如何运行完整流程”）。
 
 如何在本地运行完整流程（建议）：
+
 1. 在有足够磁盘与网络权限的机器上创建 conda 环境（推荐）：
 
 ```bash
@@ -154,12 +156,14 @@ pip install -e ml-sharp/
 ```
 
 2. 运行完整流程：
+
 ```bash
 ./run_sharp.sh
 ```
 
-3. 若你确实需要 CI 在 GitHub 上运行完整集成（包含全部 heavy deps），建议：
-- 使用自托管 runner（有足够磁盘与 GPU 支持），或  
+### 若你确实需要 CI 在 GitHub 上运行完整集成（包含全部 heavy deps），建议：
+
+- 使用自托管 runner（有足够磁盘与 GPU 支持），或
 - 构建并使用包含所有依赖的预构建 Docker 镜像（推到 ghcr.io 或 Docker Hub），然后在 workflow 中使用 `container:` 指令运行测试。
 
-如果你希望我为你将这些变更推送到远端并触发一次 Actions，我可以立即 push 并监控运行日志，或按你的要求先不推送。请回复“请 push”或“先不 push”。  
+如果你希望我为你将这些变更推送到远端并触发一次 Actions，我可以立即 push 并监控运行日志，或按你的要求先不推送。请回复“请 push”或“先不 push”。

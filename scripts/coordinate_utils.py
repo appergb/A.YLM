@@ -18,7 +18,7 @@ import plyfile
 
 
 def load_ply_gaussians(ply_path):
-    """加载PLY格式的高斯点云数据"""
+    """加载PLY格式的高斯点云数据."""
     plydata = plyfile.PlyData.read(ply_path)
 
     # 提取顶点数据
@@ -43,7 +43,7 @@ def load_ply_gaussians(ply_path):
 
 
 def save_ply_gaussians(ply_path, gaussians_data):
-    """保存PLY格式的高斯点云数据"""
+    """保存PLY格式的高斯点云数据."""
     positions = gaussians_data["positions"]
     scales = gaussians_data["scales"]
     rotations = gaussians_data["rotations"]
