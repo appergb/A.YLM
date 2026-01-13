@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""
-SHARP 3D高斯模型坐标转换工具
+"""SHARP 3D高斯模型坐标转换工具.
+
 用于智能设备导航应用的坐标系对齐
 
 SHARP默认坐标系: OpenCV标准 (x右, y下, z前)
@@ -24,9 +24,7 @@ def load_ply_gaussians(ply_path):
     # 提取顶点数据
     vertices = plydata["vertex"]
     positions = np.vstack([vertices["x"], vertices["y"], vertices["z"]]).T
-    scales = np.vstack(
-        [vertices["scale_0"], vertices["scale_1"], vertices["scale_2"]]
-    ).T
+    scales = np.vstack([vertices["scale_0"], vertices["scale_1"], vertices["scale_2"]]).T
     rotations = np.vstack(
         [vertices["rot_0"], vertices["rot_1"], vertices["rot_2"], vertices["rot_3"]]
     ).T
@@ -145,10 +143,9 @@ def save_ply_gaussians(ply_path, gaussians_data):
 
 
 def transform_for_navigation(gaussians_data, transform_type="opencv_to_robot"):
-    """
-    将SHARP坐标系转换为智能设备导航坐标系
+    """将SHARP坐标系转换为智能设备导航坐标系.
 
-    参数:
+    Args:
         gaussians_data: 高斯数据字典
         transform_type: 转换类型
             'opencv_to_robot': OpenCV (x右,y下,z前) -> 机器人 (x前,y左,z上)
@@ -180,10 +177,9 @@ def transform_for_navigation(gaussians_data, transform_type="opencv_to_robot"):
 
 
 def process_sharp_output(input_dir, output_dir, transform_type="opencv_to_robot"):
-    """
-    批量处理SHARP输出文件，进行坐标系转换
+    """批量处理SHARP输出文件，进行坐标系转换.
 
-    参数:
+    Args:
         input_dir: SHARP输出目录
         output_dir: 处理后输出目录
         transform_type: 坐标转换类型

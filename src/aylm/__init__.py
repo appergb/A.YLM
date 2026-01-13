@@ -1,4 +1,4 @@
-"""A.YLM - Single-Image 3D Reconstruction and Intelligent Navigation System"""
+"""A.YLM - Single-Image 3D Reconstruction and Intelligent Navigation System."""
 
 __version__ = "1.0.0"
 __author__ = "TRIP(appergb)"

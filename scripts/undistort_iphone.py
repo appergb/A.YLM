@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""
-iPhone照片去畸变工具
-专门用于处理iPhone超广角镜头的畸变，优化SHARP模型生成质量
+"""iPhone照片去畸变工具.
+
+专门用于处理iPhone超广角镜头的畸变，优化SHARP模型生成质量.
 
 使用方法:
 python undistort_iphone.py -i inputs/input_images -o outputs/undistorted_images
@@ -35,7 +35,7 @@ IPHONE_ULTRA_WIDE_PARAMS = {
 
 
 def load_camera_params(json_path=None):
-    """加载相机参数"""
+    """加载相机参数."""
     if json_path and Path(json_path).exists():
         with open(json_path, "r") as f:
             return json.load(f)
@@ -45,7 +45,7 @@ def load_camera_params(json_path=None):
 
 
 def undistort_image(image_path, camera_params, output_path):
-    """去畸变单张图像"""
+    """去畸变单张图像."""
     # 读取图像
     img = cv2.imread(str(image_path))
     if img is None:
@@ -77,9 +77,7 @@ def undistort_image(image_path, camera_params, output_path):
 
     # 计算去畸变映射
     new_K, roi = cv2.getOptimalNewCameraMatrix(K, dist_coeffs, (w, h), 1, (w, h))
-    mapx, mapy = cv2.initUndistortRectifyMap(
-        K, dist_coeffs, None, new_K, (w, h), cv2.CV_32FC1
-    )
+    mapx, mapy = cv2.initUndistortRectifyMap(K, dist_coeffs, None, new_K, (w, h), cv2.CV_32FC1)
 
     # 应用去畸变
     undistorted = cv2.remap(img, mapx, mapy, cv2.INTER_LINEAR)
@@ -94,7 +92,7 @@ def undistort_image(image_path, camera_params, output_path):
 
 
 def process_directory(input_dir, output_dir, camera_params):
-    """处理目录中的所有图像"""
+    """处理目录中的所有图像."""
     input_path = Path(input_dir)
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -134,10 +132,15 @@ def process_directory(input_dir, output_dir, camera_params):
 
 
 def calibrate_from_images(image_dir, pattern_size=(9, 6), square_size=1.0):
-    """
-    从图像序列进行相机校准
-    pattern_size: 棋盘格角点数量 (width, height)
-    square_size: 棋盘格方块大小 (cm)
+    """从图像序列进行相机校准.
+
+    Args:
+        image_dir: 包含校准图像的目录.
+        pattern_size: 棋盘格角点数量 (width, height).
+        square_size: 棋盘格方块大小 (cm).
+
+    Returns:
+        校准参数字典或None.
     """
     print("开始相机校准...")
 
@@ -192,9 +195,7 @@ def calibrate_from_images(image_dir, pattern_size=(9, 6), square_size=1.0):
 
     # 相机校准
     h, w = gray.shape[:2]
-    ret, K, dist, rvecs, tvecs = cv2.calibrateCamera(
-        objpoints, imgpoints, (w, h), None, None
-    )
+    ret, K, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, (w, h), None, None)
 
     if ret:
         print("相机校准成功!")
@@ -222,6 +223,7 @@ def calibrate_from_images(image_dir, pattern_size=(9, 6), square_size=1.0):
 
 
 def main():
+    """主函数入口."""
     parser = argparse.ArgumentParser(description="iPhone照片去畸变工具")
     parser.add_argument("--input", "-i", required=True, help="输入图像目录")
     parser.add_argument("--output", "-o", required=True, help="输出目录")
@@ -234,9 +236,7 @@ def main():
         default=[9, 6],
         help="棋盘格角点数量 (默认: 9 6)",
     )
-    parser.add_argument(
-        "--square-size", type=float, default=1.0, help="棋盘格方块大小 (默认: 1.0)"
-    )
+    parser.add_argument("--square-size", type=float, default=1.0, help="棋盘格方块大小 (默认: 1.0)")
 
     args = parser.parse_args()
 
@@ -245,9 +245,7 @@ def main():
 
     if args.calibrate:
         print("执行相机校准模式...")
-        params = calibrate_from_images(
-            args.input, tuple(args.pattern_size), args.square_size
-        )
+        params = calibrate_from_images(args.input, tuple(args.pattern_size), args.square_size)
         if params:
             # 保存校准结果
             output_path = Path(args.output)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""
-SHARP模型预加载脚本
-提前加载SHARP模型到内存中，避免每次运行都需要重新加载模型
+"""SHARP模型预加载脚本.
+
+提前加载SHARP模型到内存中，避免每次运行都需要重新加载模型.
 
 使用方法:
 1. 预加载模型: python3 preload_sharp_model.py
@@ -11,14 +11,14 @@ SHARP模型预加载脚本
    - 然后正常运行其他脚本，模型加载会被跳过
 
 功能特性:
-- 预加载SHARP模型到共享内存
-- 提供模型状态检查功能
+    - 预加载SHARP模型到共享内存.
+    - 提供模型状态检查功能.
+    - 支持后台运行模式.
+    - 自动检测模型加载状态.
 
 作者: TRIP(appergb)
 项目参与者: closer, true
 个人研发项目
-- 支持后台运行模式
-- 自动检测模型加载状态
 """
 
 import json
@@ -59,11 +59,10 @@ except ImportError as e:
 
 
 class SharpModelPreloader:
-    """SHARP模型预加载器"""
+    """SHARP模型预加载器."""
 
     def __init__(self, checkpoint_path: Optional[str] = None, device: str = "auto"):
-        """
-        初始化预加载器
+        """初始化预加载器.
 
         Args:
             checkpoint_path: 模型检查点路径
@@ -80,13 +79,11 @@ class SharpModelPreloader:
         self.metadata_file: Optional[str] = None
 
         # 设置日志
-        logging.basicConfig(
-            level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-        )
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
         self.logger = logging.getLogger(__name__)
 
     def _get_device(self, device: str) -> str:
-        """获取计算设备"""
+        """获取计算设备."""
         if device == "auto":
             if torch.cuda.is_available():
                 return "cuda"
@@ -97,14 +94,12 @@ class SharpModelPreloader:
         return device
 
     def save_model_metadata(self):
-        """安全地保存模型元数据"""
+        """安全地保存模型元数据."""
         metadata = {
             "loaded": True,
             "device": self.device,
             "checkpoint_path": (
-                str(Path(self.checkpoint_path).resolve())
-                if self.checkpoint_path
-                else ""
+                str(Path(self.checkpoint_path).resolve()) if self.checkpoint_path else ""
             ),
         }
 
@@ -115,8 +110,7 @@ class SharpModelPreloader:
         os.environ["SHARP_MODEL_METADATA"] = self.metadata_file
 
     def preload_model(self) -> bool:
-        """
-        预加载SHARP模型
+        """预加载SHARP模型.
 
         Returns:
             是否加载成功
@@ -138,9 +132,7 @@ class SharpModelPreloader:
 
             # 加载模型状态字典
             if str(self.checkpoint_path).startswith("http"):
-                state_dict = torch.hub.load_state_dict_from_url(
-                    self.checkpoint_path, progress=True
-                )
+                state_dict = torch.hub.load_state_dict_from_url(self.checkpoint_path, progress=True)
             else:
                 state_dict = torch.load(self.checkpoint_path, weights_only=True)
 
@@ -151,9 +143,7 @@ class SharpModelPreloader:
             self.model.to(self.device)
 
             self.logger.info(f"   模型类型: {type(self.model).__name__}")
-            self.logger.info(
-                f"   模型参数量: {sum(p.numel() for p in self.model.parameters()):,}"
-            )
+            self.logger.info(f"   模型参数量: {sum(p.numel() for p in self.model.parameters()):,}")
 
             self.load_time = time.time() - start_time
             self.loaded = True
@@ -174,7 +164,7 @@ class SharpModelPreloader:
             return False
 
     def get_model_info(self) -> Dict[str, Any]:
-        """获取模型信息"""
+        """获取模型信息."""
         if not self.loaded:
             return {"loaded": False}
 
@@ -187,7 +177,7 @@ class SharpModelPreloader:
         }
 
     def unload_model(self):
-        """卸载模型"""
+        """卸载模型."""
         if self.model:
             del self.model
             self.model = None
@@ -215,7 +205,7 @@ class SharpModelPreloader:
 
 
 def check_model_status() -> Dict[str, Any]:
-    """检查模型加载状态"""
+    """检查模型加载状态."""
     metadata_file = os.environ.get("SHARP_MODEL_METADATA")
 
     if metadata_file and Path(metadata_file).exists():
@@ -239,7 +229,7 @@ def check_model_status() -> Dict[str, Any]:
 
 
 def signal_handler(signum, frame):
-    """信号处理器"""
+    """信号处理器."""
     print("\n🛑 收到停止信号，正在清理...")
     preloader = getattr(signal_handler, "preloader", None)
     if preloader:
@@ -248,7 +238,7 @@ def signal_handler(signum, frame):
 
 
 def main():
-    """主函数"""
+    """主函数."""
     import argparse
 
     parser = argparse.ArgumentParser(description="SHARP模型预加载器")

@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""
-A.YLM CLI 入口点
-"""
+"""A.YLM CLI 入口点."""
 
 
 def main_cli():
-    """主CLI入口点"""
-    print(
-        "A.YLM v1.0.0 - Single-Image 3D Reconstruction and Intelligent Navigation System"
-    )
+    """主CLI入口点."""
+    print("A.YLM v1.0.0 - Single-Image 3D Reconstruction and Intelligent Navigation System")
     print("=" * 70)
     print("这个CLI接口正在开发中...")
     print()
