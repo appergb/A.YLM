@@ -33,7 +33,7 @@ git clone https://github.com/appergb/A.YLM.git
 cd A.YLM
 
 # 安装依赖
-pip install -r requirements.txt
+pip install -e .
 pip install -e ml-sharp/
 
 # 或者安装开发版本（包含测试依赖）
@@ -92,27 +92,22 @@ from aylm.tools.pointcloud_voxelizer import PointCloudVoxelizer
 A.YLM/
 ├── src/aylm/                    # 主包
 │   ├── cli.py                   # 命令行接口
-│   ├── core/                    # 核心功能
-│   │   ├── exceptions.py        # 自定义异常
-│   │   └── __init__.py
-│   ├── config/                  # 配置管理
-│   │   ├── settings.py          # 设置类
-│   │   └── __init__.py
 │   ├── tools/                   # 工具脚本
-│   │   ├── coordinate_utils.py  # 坐标转换
-│   │   ├── pointcloud_voxelizer.py  # 体素化
-│   │   └── undistort_iphone.py  # 图像去畸变
-│   ├── utils/                   # 工具函数
-│   │   ├── colors.py            # 颜色输出
-│   │   ├── file_utils.py        # 文件操作
-│   │   └── logging.py           # 日志工具
+│   │   ├── coordinate_utils.py  # 坐标转换工具
+│   │   ├── pointcloud_voxelizer.py  # 点云体素化工具
+│   │   ├── preload_sharp_model.py  # 模型预加载工具
+│   │   └── undistort_iphone.py  # iPhone图像去畸变工具
 │   └── __init__.py
-├── ml-sharp/                    # SHARP模型 (子模块)
-├── models/                      # 模型文件
-├── inputs/                      # 输入数据
-├── outputs/                     # 输出结果
-├── tests/                       # 测试套件
-└── scripts/                     # 兼容性脚本
+├── ml-sharp/                    # SHARP模型 (Git子模块)
+├── models/                      # 模型权重文件
+├── inputs/                      # 输入数据目录
+│   └── input_images/            # 输入图像
+├── outputs/                     # 输出结果目录
+│   ├── output_gaussians/        # 高斯模型输出
+│   └── README.md                # 输出说明
+├── pyproject.toml               # 项目配置和依赖
+├── run_sharp.sh                 # 一键运行脚本
+└── README.md                    # 项目文档
 ```
 
 ## 输出文件
