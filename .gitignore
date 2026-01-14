@@ -175,4 +175,5 @@ target/
 var/
 venv.bak/
 venv/
+aylm_env/
 wheels/

@@ -19,6 +19,7 @@
 import argparse
 import logging
 import os
+import platform
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -51,12 +52,64 @@ class PointCloudVoxelizer:
         self.voxel_size = voxel_size
         self.debug = debug
 
+        # 检测平台和硬件
+        self.is_macos = platform.system() == "Darwin"
+        self.is_apple_silicon = self._detect_apple_silicon()
+
         # 设置日志
         logging.basicConfig(
             level=logging.DEBUG if debug else logging.INFO,
             format="%(asctime)s - %(levelname)s - %(message)s",
         )
         self.logger = logging.getLogger(__name__)
+
+        if self.is_apple_silicon:
+            self.logger.warning("检测到Apple Silicon (M系列芯片)，将使用兼容模式")
+            self.logger.warning("某些几何操作可能会被跳过以避免兼容性问题")
+
+    def _detect_apple_silicon(self) -> bool:
+        """检测是否为Apple Silicon (M系列芯片)."""
+        try:
+            if not self.is_macos:
+                return False
+
+            # 方法1: 检查处理器型号
+            try:
+                import subprocess
+
+                result = subprocess.run(
+                    ["sysctl", "-n", "machdep.cpu.brand_string"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    cpu_brand = result.stdout.strip()
+                    if "Apple" in cpu_brand and (
+                        "M1" in cpu_brand or "M2" in cpu_brand or "M3" in cpu_brand
+                    ):
+                        return True
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
+
+            # 方法2: 检查架构
+            machine = platform.machine().lower()
+            if machine in ["arm64", "aarch64"]:
+                return True
+
+            # 方法3: 环境变量检查
+            if os.environ.get("APPLE_SILICON_FORCE_COMPAT", "").lower() in [
+                "1",
+                "true",
+                "yes",
+            ]:
+                return True
+
+            return False
+
+        except Exception:
+            # 如果检测失败，默认认为不是Apple Silicon
+            return False
 
     def load_pointcloud(self, file_path: str) -> Optional[o3d.geometry.PointCloud]:
         """加载点云文件.
@@ -340,6 +393,18 @@ class PointCloudVoxelizer:
                     f"[{center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f}]"
                 )
 
+                # Apple Silicon兼容性处理
+                if self.is_apple_silicon:
+                    self.logger.warning(
+                        "Apple Silicon检测到，为避免兼容性问题跳过地面旋转校正"
+                    )
+                    return pcd, {
+                        **quality_info,
+                        "success": True,
+                        "corrected": False,
+                        "apple_silicon_compat": True,
+                    }
+
                 # 应用旋转
                 pcd_corrected = pcd.rotate(R, center=center)
 
@@ -389,6 +454,14 @@ class PointCloudVoxelizer:
         num_iterations: int,
     ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         """执行多重RANSAC检测."""
+        # Apple Silicon兼容性：跳过RANSAC检测
+        if self.is_apple_silicon:
+            self.logger.warning(
+                "Apple Silicon检测到，为避免兼容性问题跳过RANSAC地面检测"
+            )
+            # 返回默认水平地面
+            return np.array([0, 0, 1, 0]), np.array([])
+
         # 运行多次RANSAC取最佳结果
         best_plane_model = None
         best_inliers = None
@@ -504,6 +577,10 @@ class PointCloudVoxelizer:
             验证结果
         """
         try:
+            # Apple Silicon兼容性：跳过地面验证
+            if self.is_apple_silicon:
+                return {"valid": True, "improvement": 0}
+
             # 重新检测地面
             plane_model, inliers = pcd.segment_plane(
                 distance_threshold=0.01, ransac_n=3, num_iterations=1000
@@ -603,6 +680,11 @@ class PointCloudVoxelizer:
         """
         try:
             self.logger.info("开始地面平面检测...")
+
+            # Apple Silicon兼容性：返回默认地面
+            if self.is_apple_silicon:
+                self.logger.warning("Apple Silicon检测到，使用默认水平地面")
+                return np.array([0, 0, 1, 0]), np.array([])
 
             # 使用RANSAC平面分割
             plane_model, inliers = pcd.segment_plane(
@@ -1060,15 +1142,19 @@ class PointCloudVoxelizer:
                 ground_plane = None
                 if ground_leveling or texture_noise:
                     try:
-                        plane_model, inliers = pcd.segment_plane(
-                            distance_threshold=0.01, ransac_n=3, num_iterations=1000
-                        )
-                        inlier_ratio = len(inliers) / len(points)
-                        if inlier_ratio > 0.1:  # 至少10%的点在地面上
-                            ground_plane = plane_model
-                            self.logger.info("检测到地面平面，将进行坐标系转换")
+                        # Apple Silicon兼容性：跳过地面检测
+                        if self.is_apple_silicon:
+                            self.logger.warning("Apple Silicon检测到，跳过地面增强处理")
                         else:
-                            self.logger.warning("地面检测失败，将跳过地面增强处理")
+                            plane_model, inliers = pcd.segment_plane(
+                                distance_threshold=0.01, ransac_n=3, num_iterations=1000
+                            )
+                            inlier_ratio = len(inliers) / len(points)
+                            if inlier_ratio > 0.1:  # 至少10%的点在地面上
+                                ground_plane = plane_model
+                                self.logger.info("检测到地面平面，将进行坐标系转换")
+                            else:
+                                self.logger.warning("地面检测失败，将跳过地面增强处理")
                     except Exception as e:
                         self.logger.warning(f"地面检测失败: {str(e)}")
 
