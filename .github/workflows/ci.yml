@@ -96,8 +96,9 @@ jobs:
         python -m pip install --upgrade pip
         # Install CPU versions to avoid CUDA complexity in CI
         pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu --no-deps
-        pip install -e .[dev] --no-deps
-        pip install -r requirements.txt
+        # Install project with dev dependencies (includes pytest, black, etc.)
+        pip install -e .[dev]
+        # Install submodule dependency
         pip install -e ml-sharp/
 
     - name: Download minimal test model
@@ -246,8 +247,9 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-        pip install -e .[dev] --no-deps
-        pip install -r requirements.txt
+        # Install project with dev dependencies
+        pip install -e .[dev]
+        # Install submodule dependency
         pip install -e ml-sharp/
 
     - name: Run basic tests (macOS)
@@ -281,8 +283,9 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-        pip install -e .[dev] --no-deps
-        pip install -r requirements.txt
+        # Install project with dev dependencies
+        pip install -e .[dev]
+        # Install submodule dependency
         pip install -e ml-sharp/
 
     - name: Run basic tests (Windows)
