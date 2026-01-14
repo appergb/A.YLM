@@ -52,7 +52,7 @@ install_system_deps() {
     if [[ "$OS" == "linux" ]]; then
         sudo apt-get update
         sudo apt-get install -y \
-            libgl1-mesa-glx \
+            libgl1 \
             libglib2.0-0 \
             libsm6 \
             libxext6 \
