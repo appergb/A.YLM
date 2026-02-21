@@ -50,6 +50,9 @@ inputs/input_images/*
 .DS_Store
 Thumbs.db
 
+# Claude Code
+CLAUDE.md
+
 # Testing
 .pytest_cache/
 .coverage

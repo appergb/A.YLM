@@ -147,7 +147,9 @@ def cmd_predict(args: argparse.Namespace) -> int:
     result = subprocess.run(cmd, capture_output=not args.verbose)
     if result.returncode != 0:
         if not args.verbose:
-            logger.error(f"预测失败: {result.stderr.decode() if result.stderr else '未知错误'}")
+            logger.error(
+                f"预测失败: {result.stderr.decode() if result.stderr else '未知错误'}"
+            )
         else:
             logger.error("预测失败")
         return 1
@@ -228,9 +230,7 @@ def cmd_process(args: argparse.Namespace) -> int:
     print("=" * 40)
     root = get_project_root()
     vox_input = Path(args.output) if args.output else root / "outputs/output_gaussians"
-    vox_args = argparse.Namespace(
-        input=str(vox_input), output=None, voxel_size=0.005
-    )
+    vox_args = argparse.Namespace(input=str(vox_input), output=None, voxel_size=0.005)
     if cmd_voxelize(vox_args) != 0:
         return 1
 
