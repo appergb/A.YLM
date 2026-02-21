@@ -6,6 +6,7 @@
 - predict: 运行SHARP预测
 - voxelize: 运行体素化
 - process: 完整流程
+- pipeline: 流水线处理（推理与体素化并行）
 """
 
 import argparse
@@ -238,6 +239,100 @@ def cmd_process(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_pipeline(args: argparse.Namespace) -> int:
+    """运行流水线处理（推理与体素化并行）."""
+    # 处理 verbose/quiet 参数：--quiet 优先级高于 --verbose
+    verbose = not args.quiet if args.quiet else args.verbose
+
+    print(f"AYLM v{get_version()} - 流水线处理\n")
+
+    root = get_project_root()
+    input_dir = Path(args.input) if args.input else root / "inputs/input_images"
+    output_dir = Path(args.output) if args.output else root / "outputs/output_gaussians"
+
+    # 检查输入目录
+    if not input_dir.exists():
+        logger.error(f"输入目录不存在: {input_dir}")
+        return 1
+
+    # 扫描支持的图像文件
+    exts = {".jpg", ".jpeg", ".png", ".heic", ".webp"}
+    images = sorted([f for f in input_dir.iterdir() if f.suffix.lower() in exts])
+
+    if not images:
+        logger.error(f"未找到图像文件: {input_dir}")
+        return 1
+
+    # 显示输入信息
+    print(f"[输入] 目录: {input_dir}")
+    print(f"[输入] 图像数量: {len(images)}")
+    if verbose and len(images) <= 10:
+        for img in images:
+            print(f"       - {img.name}")
+    elif verbose:
+        for img in images[:5]:
+            print(f"       - {img.name}")
+        print(f"       ... 还有 {len(images) - 5} 张")
+
+    # 检查模型
+    model_path = root / "models" / "sharp_2572gikvuh.pt"
+    if not model_path.exists():
+        logger.error("模型不存在，请先运行: aylm setup --download")
+        return 1
+    print(f"[模型] {model_path.name}")
+
+    # 显示配置
+    print(f"\n[配置]")
+    print(f"  体素尺寸: {args.voxel_size}m")
+    print(f"  移除地面: {'否' if args.keep_ground else '是'}")
+    print(f"  坐标转换: {'是' if args.transform else '否'}")
+    print(f"  详细输出: {'是' if verbose else '否'}")
+
+    # 显示流水线策略
+    print(f"\n[流水线策略]")
+    print(f"  模式: 推理与体素化并行")
+    print(f"  线程: 推理(主线程/GPU) + 体素化(工作线程/CPU)")
+    if len(images) >= 2:
+        print(f"  预计并行阶段: {len(images) - 1} 次")
+
+    print(f"\n[输出] {output_dir}")
+    print("=" * 50)
+
+    try:
+        from aylm.tools.pipeline_processor import PipelineConfig, PipelineProcessor
+
+        config = PipelineConfig(
+            voxel_size=args.voxel_size,
+            remove_ground=not args.keep_ground,
+            transform_coords=args.transform,
+            checkpoint_path=model_path,
+            verbose=verbose,
+        )
+
+        processor = PipelineProcessor(config)
+        stats = processor.process(input_dir, output_dir)
+
+        # 显示最终统计
+        print("\n" + "=" * 50)
+        print("[完成] 流水线处理结束")
+        print(f"  成功: {stats.successful_images}/{stats.total_images}")
+        if stats.failed_images > 0:
+            print(f"  失败: {stats.failed_images}")
+        print(f"  总耗时: {stats.total_time:.1f}s")
+        if stats.successful_images > 0:
+            print(f"  平均: {stats.total_time / stats.successful_images:.1f}s/张")
+
+        return 0 if stats.failed_images == 0 else 1
+
+    except ImportError as e:
+        logger.error(f"导入流水线模块失败: {e}")
+        logger.error("请确保已安装所有依赖: pip install -e .")
+        return 1
+    except Exception as e:
+        logger.error(f"流水线处理失败: {e}")
+        return 1
+
+
 def create_parser() -> argparse.ArgumentParser:
     """创建命令行解析器."""
     parser = argparse.ArgumentParser(
@@ -272,6 +367,17 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("-o", "--output", help="输出目录")
     p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
     p.set_defaults(func=cmd_process)
+
+    # pipeline
+    p = subs.add_parser("pipeline", help="流水线处理（推理与体素化并行）")
+    p.add_argument("-i", "--input", help="输入图像目录")
+    p.add_argument("-o", "--output", help="输出目录")
+    p.add_argument("--voxel-size", type=float, default=0.005, help="体素尺寸(米)")
+    p.add_argument("--keep-ground", action="store_true", help="保留地面点")
+    p.add_argument("--transform", action="store_true", help="转换到机器人坐标系")
+    p.add_argument("-v", "--verbose", action="store_true", default=True, help="详细输出（默认开启）")
+    p.add_argument("-q", "--quiet", action="store_true", help="安静模式（禁用详细输出）")
+    p.set_defaults(func=cmd_pipeline)
 
     return parser
 

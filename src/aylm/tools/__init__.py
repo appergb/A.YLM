@@ -5,6 +5,13 @@ from .coordinate_utils import (
     transform_opencv_to_enu,
     transform_opencv_to_robot,
 )
+from .pipeline_processor import (
+    PipelineConfig,
+    PipelineProcessor,
+    PipelineStats,
+    run_pipeline,
+    run_pipeline_async,
+)
 from .pointcloud_voxelizer import (
     PointCloud,
     PointCloudVoxelizer,
@@ -18,4 +25,9 @@ __all__ = [
     "PointCloud",
     "PointCloudVoxelizer",
     "VoxelizerConfig",
+    "PipelineConfig",
+    "PipelineProcessor",
+    "PipelineStats",
+    "run_pipeline",
+    "run_pipeline_async",
 ]
