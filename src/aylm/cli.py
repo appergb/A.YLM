@@ -375,8 +375,16 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("--voxel-size", type=float, default=0.005, help="体素尺寸(米)")
     p.add_argument("--keep-ground", action="store_true", help="保留地面点")
     p.add_argument("--transform", action="store_true", help="转换到机器人坐标系")
-    p.add_argument("-v", "--verbose", action="store_true", default=True, help="详细输出（默认开启）")
-    p.add_argument("-q", "--quiet", action="store_true", help="安静模式（禁用详细输出）")
+    p.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=True,
+        help="详细输出（默认开启）",
+    )
+    p.add_argument(
+        "-q", "--quiet", action="store_true", help="安静模式（禁用详细输出）"
+    )
     p.set_defaults(func=cmd_pipeline)
 
     return parser

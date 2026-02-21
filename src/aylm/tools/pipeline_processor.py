@@ -20,7 +20,7 @@ import gc
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -37,17 +37,19 @@ logger = logging.getLogger(__name__)
 
 class TaskStatus(Enum):
     """任务状态枚举。"""
-    PENDING = "pending"           # 等待中
-    PREDICTING = "predicting"     # 模型推理中
-    PREDICTED = "predicted"       # 推理完成
-    VOXELIZING = "voxelizing"     # 体素化中
-    COMPLETED = "completed"       # 全部完成
-    FAILED = "failed"             # 失败
+
+    PENDING = "pending"  # 等待中
+    PREDICTING = "predicting"  # 模型推理中
+    PREDICTED = "predicted"  # 推理完成
+    VOXELIZING = "voxelizing"  # 体素化中
+    COMPLETED = "completed"  # 全部完成
+    FAILED = "failed"  # 失败
 
 
 @dataclass
 class ImageTask:
     """单张图像的处理任务。"""
+
     image_path: Path
     index: int
     status: TaskStatus = TaskStatus.PENDING
@@ -63,19 +65,21 @@ class ImageTask:
 @dataclass
 class PipelineConfig:
     """流水线配置。"""
-    voxel_size: float = 0.005           # 体素尺寸（米）
-    remove_ground: bool = True          # 是否移除地面
-    transform_coords: bool = False      # 是否转换坐标系
-    device: str = "auto"                # 设备选择
-    verbose: bool = True                # 详细输出
+
+    voxel_size: float = 0.005  # 体素尺寸（米）
+    remove_ground: bool = True  # 是否移除地面
+    transform_coords: bool = False  # 是否转换坐标系
+    device: str = "auto"  # 设备选择
+    verbose: bool = True  # 详细输出
     checkpoint_path: Optional[Path] = None  # 模型检查点路径
-    auto_unload: bool = True            # 处理完成后自动卸载模型
-    async_mode: bool = False            # 异步处理模式
+    auto_unload: bool = True  # 处理完成后自动卸载模型
+    async_mode: bool = False  # 异步处理模式
 
 
 @dataclass
 class PipelineStats:
     """流水线统计信息。"""
+
     total_images: int = 0
     completed_images: int = 0
     failed_images: int = 0
@@ -207,8 +211,12 @@ class PipelineLogger:
             print(f"  平均体素化时间: {stats.avg_voxel_time:.2f} 秒/张")
             if stats.total_images > 1:
                 # 计算流水线效率
-                sequential_time = (stats.avg_predict_time + stats.avg_voxel_time) * stats.completed_images
-                efficiency = sequential_time / stats.total_time if stats.total_time > 0 else 0
+                sequential_time = (
+                    stats.avg_predict_time + stats.avg_voxel_time
+                ) * stats.completed_images
+                efficiency = (
+                    sequential_time / stats.total_time if stats.total_time > 0 else 0
+                )
                 print(f"  流水线效率:     {efficiency:.1%}")
             print("=" * 60 + "\n")
 
@@ -291,7 +299,7 @@ class PipelineProcessor:
             # 清除模型引用
             if self._predictor is not None:
                 # 将模型移到CPU（如果在GPU上）
-                if self._device and self._device.type != 'cpu':
+                if self._device and self._device.type != "cpu":
                     try:
                         self._predictor.cpu()
                     except Exception:
@@ -314,7 +322,7 @@ class PipelineProcessor:
                 torch.cuda.synchronize()
 
             # 清理MPS缓存（Apple Silicon）
-            if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+            if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
                 try:
                     torch.mps.empty_cache()
                 except Exception:
@@ -345,7 +353,7 @@ class PipelineProcessor:
 
         if torch.cuda.is_available():
             return torch.device("cuda")
-        elif hasattr(torch, 'mps') and torch.mps.is_available():
+        elif hasattr(torch, "mps") and torch.mps.is_available():
             return torch.device("mps")
         else:
             return torch.device("cpu")
@@ -366,15 +374,15 @@ class PipelineProcessor:
                 state_dict = torch.load(
                     self.config.checkpoint_path,
                     weights_only=True,
-                    map_location=self._device
+                    map_location=self._device,
                 )
             else:
-                model_url = "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt"
+                model_url = (
+                    "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt"
+                )
                 self.log.info(f"从网络下载模型...")
                 state_dict = torch.hub.load_state_dict_from_url(
-                    model_url,
-                    progress=True,
-                    map_location=self._device
+                    model_url, progress=True, map_location=self._device
                 )
 
             # 创建预测器
@@ -427,7 +435,10 @@ class PipelineProcessor:
 
             # 预处理
             internal_shape = (1536, 1536)
-            image_pt = torch.from_numpy(image.copy()).float().to(self._device).permute(2, 0, 1) / 255.0
+            image_pt = (
+                torch.from_numpy(image.copy()).float().to(self._device).permute(2, 0, 1)
+                / 255.0
+            )
             disparity_factor = torch.tensor([f_px / width]).float().to(self._device)
 
             image_resized_pt = F.interpolate(
@@ -442,12 +453,18 @@ class PipelineProcessor:
                 gaussians_ndc = self._predictor(image_resized_pt, disparity_factor)
 
             # 后处理
-            intrinsics = torch.tensor([
-                [f_px, 0, width / 2, 0],
-                [0, f_px, height / 2, 0],
-                [0, 0, 1, 0],
-                [0, 0, 0, 1],
-            ]).float().to(self._device)
+            intrinsics = (
+                torch.tensor(
+                    [
+                        [f_px, 0, width / 2, 0],
+                        [0, f_px, height / 2, 0],
+                        [0, 0, 1, 0],
+                        [0, 0, 0, 1],
+                    ]
+                )
+                .float()
+                .to(self._device)
+            )
 
             intrinsics_resized = intrinsics.clone()
             intrinsics_resized[0] *= internal_shape[0] / width
@@ -457,7 +474,7 @@ class PipelineProcessor:
                 gaussians_ndc,
                 torch.eye(4).to(self._device),
                 intrinsics_resized,
-                internal_shape
+                internal_shape,
             )
 
             # 保存PLY
@@ -469,7 +486,9 @@ class PipelineProcessor:
             task.predict_end_time = time.time()
 
             predict_time = task.predict_end_time - task.predict_start_time
-            self.log.ok(f"[{task.index+1}] 推理完成: {task.image_path.name} ({predict_time:.2f}s)")
+            self.log.ok(
+                f"[{task.index+1}] 推理完成: {task.image_path.name} ({predict_time:.2f}s)"
+            )
             self.log.info(f"    输出: {output_path.name}")
 
             return True
@@ -509,7 +528,9 @@ class PipelineProcessor:
             task.voxel_end_time = time.time()
 
             voxel_time = task.voxel_end_time - task.voxel_start_time
-            self.log.ok(f"[{task.index+1}] 体素化完成: {task.ply_output_path.name} ({voxel_time:.2f}s)")
+            self.log.ok(
+                f"[{task.index+1}] 体素化完成: {task.ply_output_path.name} ({voxel_time:.2f}s)"
+            )
             self.log.info(f"    输出: {output_path.name}")
 
             return True
@@ -526,7 +547,7 @@ class PipelineProcessor:
 
     def _collect_images(self, input_path: Path) -> List[Path]:
         """收集输入目录中的图像文件。"""
-        extensions = {'.jpg', '.jpeg', '.png', '.heic', '.webp', '.tiff', '.bmp'}
+        extensions = {".jpg", ".jpeg", ".png", ".heic", ".webp", ".tiff", ".bmp"}
 
         if input_path.is_file():
             if input_path.suffix.lower() in extensions:
@@ -544,7 +565,7 @@ class PipelineProcessor:
         self,
         input_path: Path,
         output_dir: Path,
-        voxel_output_dir: Optional[Path] = None
+        voxel_output_dir: Optional[Path] = None,
     ) -> PipelineStats:
         """执行流水线处理。
 
@@ -598,8 +619,7 @@ class PipelineProcessor:
 
         # 创建任务
         self._tasks = [
-            ImageTask(image_path=path, index=i)
-            for i, path in enumerate(image_paths)
+            ImageTask(image_path=path, index=i) for i, path in enumerate(image_paths)
         ]
 
         # 加载模型
@@ -625,9 +645,13 @@ class PipelineProcessor:
             if task.status == TaskStatus.COMPLETED:
                 self.stats.completed_images += 1
                 if task.predict_start_time and task.predict_end_time:
-                    self.stats.total_predict_time += (task.predict_end_time - task.predict_start_time)
+                    self.stats.total_predict_time += (
+                        task.predict_end_time - task.predict_start_time
+                    )
                 if task.voxel_start_time and task.voxel_end_time:
-                    self.stats.total_voxel_time += (task.voxel_end_time - task.voxel_start_time)
+                    self.stats.total_voxel_time += (
+                        task.voxel_end_time - task.voxel_start_time
+                    )
             elif task.status == TaskStatus.FAILED:
                 self.stats.failed_images += 1
 
@@ -649,7 +673,7 @@ class PipelineProcessor:
         input_path: Path,
         output_dir: Path,
         voxel_output_dir: Optional[Path] = None,
-        callback: Optional[Callable[[PipelineStats], None]] = None
+        callback: Optional[Callable[[PipelineStats], None]] = None,
     ) -> Future:
         """异步执行流水线处理。
 
@@ -674,7 +698,9 @@ class PipelineProcessor:
             >>> stats = future.result(timeout=300)
         """
         if self._async_executor is None:
-            self._async_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pipeline")
+            self._async_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="pipeline"
+            )
 
         def _run():
             try:
@@ -695,7 +721,9 @@ class PipelineProcessor:
             return False
         return not self._async_future.done()
 
-    def wait_for_completion(self, timeout: Optional[float] = None) -> Optional[PipelineStats]:
+    def wait_for_completion(
+        self, timeout: Optional[float] = None
+    ) -> Optional[PipelineStats]:
         """等待异步处理完成。
 
         Args:
@@ -757,7 +785,9 @@ class PipelineProcessor:
 
                 # 如果有上一张图片需要体素化，启动异步体素化
                 if prev_task_for_voxel is not None:
-                    self.log.progress(f"  启动并行体素化: [{prev_task_for_voxel.index+1}] {prev_task_for_voxel.image_path.name}")
+                    self.log.progress(
+                        f"  启动并行体素化: [{prev_task_for_voxel.index+1}] {prev_task_for_voxel.image_path.name}"
+                    )
                     voxel_future = voxel_executor.submit(
                         self._voxelize_single, prev_task_for_voxel, voxel_output_dir
                     )
@@ -836,7 +866,7 @@ def run_pipeline_async(
     checkpoint_path: Optional[str] = None,
     verbose: bool = True,
     callback: Optional[Callable[[PipelineStats], None]] = None,
-) -> Tuple['PipelineProcessor', Future]:
+) -> Tuple["PipelineProcessor", Future]:
     """便捷函数：异步运行流水线处理。
 
     Args:
@@ -869,7 +899,9 @@ def run_pipeline_async(
     )
 
     processor = PipelineProcessor(config)
-    future = processor.process_async(Path(input_path), Path(output_dir), callback=callback)
+    future = processor.process_async(
+        Path(input_path), Path(output_dir), callback=callback
+    )
     return processor, future
 
 
