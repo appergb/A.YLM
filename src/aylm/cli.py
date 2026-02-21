@@ -282,16 +282,16 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
     print(f"[模型] {model_path.name}")
 
     # 显示配置
-    print(f"\n[配置]")
+    print("\n[配置]")
     print(f"  体素尺寸: {args.voxel_size}m")
     print(f"  移除地面: {'否' if args.keep_ground else '是'}")
     print(f"  坐标转换: {'是' if args.transform else '否'}")
     print(f"  详细输出: {'是' if verbose else '否'}")
 
     # 显示流水线策略
-    print(f"\n[流水线策略]")
-    print(f"  模式: 推理与体素化并行")
-    print(f"  线程: 推理(主线程/GPU) + 体素化(工作线程/CPU)")
+    print("\n[流水线策略]")
+    print("  模式: 推理与体素化并行")
+    print("  线程: 推理(主线程/GPU) + 体素化(工作线程/CPU)")
     if len(images) >= 2:
         print(f"  预计并行阶段: {len(images) - 1} 次")
 

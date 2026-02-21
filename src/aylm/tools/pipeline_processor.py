@@ -15,20 +15,17 @@
     完成后: [====卸载模型====]
 """
 
-import asyncio
 import gc
 import logging
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from queue import Queue
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -202,11 +199,11 @@ class PipelineLogger:
             print(f"  总图像数:       {stats.total_images}")
             print(f"  成功完成:       {stats.completed_images}")
             print(f"  失败数量:       {stats.failed_images}")
-            print(f"  ─────────────────────────────────")
+            print("  ─────────────────────────────────")
             print(f"  总耗时:         {stats.total_time:.2f} 秒")
             print(f"  推理总耗时:     {stats.total_predict_time:.2f} 秒")
             print(f"  体素化总耗时:   {stats.total_voxel_time:.2f} 秒")
-            print(f"  ─────────────────────────────────")
+            print("  ─────────────────────────────────")
             print(f"  平均推理时间:   {stats.avg_predict_time:.2f} 秒/张")
             print(f"  平均体素化时间: {stats.avg_voxel_time:.2f} 秒/张")
             if stats.total_images > 1:
@@ -380,7 +377,7 @@ class PipelineProcessor:
                 model_url = (
                     "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt"
                 )
-                self.log.info(f"从网络下载模型...")
+                self.log.info("从网络下载模型...")
                 state_dict = torch.hub.load_state_dict_from_url(
                     model_url, progress=True, map_location=self._device
                 )
@@ -396,8 +393,8 @@ class PipelineProcessor:
             return True
 
         except ImportError as e:
-            self.log.error(f"模型加载失败: 缺少依赖模块")
-            self.log.error(f"    请确保已安装 sharp 包: pip install sharp")
+            self.log.error("模型加载失败: 缺少依赖模块")
+            self.log.error("    请确保已安装 sharp 包: pip install sharp")
             self.log.error(f"    详细信息: {e}")
             logger.exception("模型导入失败")
             return False
@@ -708,7 +705,7 @@ class PipelineProcessor:
                 if callback:
                     callback(stats)
                 return stats
-            except Exception as e:
+            except Exception:
                 logger.exception("异步处理失败")
                 raise
 
@@ -779,7 +776,7 @@ class PipelineProcessor:
 
                 # 显示当前阶段的并行状态
                 if i == 0:
-                    self.log.info(f"  阶段: 推理第1张（无并行）")
+                    self.log.info("  阶段: 推理第1张（无并行）")
                 elif i < total:
                     self.log.info(f"  阶段: 推理第{i+1}张 || 体素化第{i}张（并行）")
 
@@ -812,7 +809,7 @@ class PipelineProcessor:
             # 处理最后一张图片的体素化（同步执行，无并行）
             if prev_task_for_voxel is not None:
                 self.log.info(f"\n{'─' * 40}")
-                self.log.info(f"最终阶段: 体素化最后一张图片")
+                self.log.info("最终阶段: 体素化最后一张图片")
                 self._voxelize_single(prev_task_for_voxel, voxel_output_dir)
 
 
