@@ -15,6 +15,8 @@
     完成后: [====卸载模型====]
 """
 
+from __future__ import annotations
+
 import gc
 import logging
 import threading
@@ -24,7 +26,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from queue import Queue
-from typing import Callable, List, Optional, Tuple
+from typing import Callable
 
 import torch
 import torch.nn.functional as F
@@ -50,27 +52,27 @@ class ImageTask:
     image_path: Path
     index: int
     status: TaskStatus = TaskStatus.PENDING
-    ply_output_path: Optional[Path] = None
-    voxel_output_path: Optional[Path] = None
-    predict_start_time: Optional[float] = None
-    predict_end_time: Optional[float] = None
-    voxel_start_time: Optional[float] = None
-    voxel_end_time: Optional[float] = None
-    error_message: Optional[str] = None
+    ply_output_path: Path | None = None
+    voxel_output_path: Path | None = None
+    predict_start_time: float | None = None
+    predict_end_time: float | None = None
+    voxel_start_time: float | None = None
+    voxel_end_time: float | None = None
+    error_message: str | None = None
 
 
 @dataclass
 class PipelineConfig:
     """流水线配置。"""
 
-    voxel_size: float = 0.005  # 体素尺寸（米）
-    remove_ground: bool = True  # 是否移除地面
-    transform_coords: bool = False  # 是否转换坐标系
-    device: str = "auto"  # 设备选择
-    verbose: bool = True  # 详细输出
-    checkpoint_path: Optional[Path] = None  # 模型检查点路径
-    auto_unload: bool = True  # 处理完成后自动卸载模型
-    async_mode: bool = False  # 异步处理模式
+    voxel_size: float = 0.005
+    remove_ground: bool = True
+    transform_coords: bool = False
+    device: str = "auto"
+    verbose: bool = True
+    checkpoint_path: Path | None = None
+    auto_unload: bool = True
+    async_mode: bool = False
 
 
 @dataclass
@@ -82,8 +84,8 @@ class PipelineStats:
     failed_images: int = 0
     total_predict_time: float = 0.0
     total_voxel_time: float = 0.0
-    pipeline_start_time: Optional[float] = None
-    pipeline_end_time: Optional[float] = None
+    pipeline_start_time: float | None = None
+    pipeline_end_time: float | None = None
 
     @property
     def total_time(self) -> float:
@@ -93,19 +95,41 @@ class PipelineStats:
 
     @property
     def avg_predict_time(self) -> float:
-        if self.completed_images > 0:
-            return self.total_predict_time / self.completed_images
-        return 0.0
+        return (
+            self.total_predict_time / self.completed_images
+            if self.completed_images
+            else 0.0
+        )
 
     @property
     def avg_voxel_time(self) -> float:
-        if self.completed_images > 0:
-            return self.total_voxel_time / self.completed_images
-        return 0.0
+        return (
+            self.total_voxel_time / self.completed_images
+            if self.completed_images
+            else 0.0
+        )
 
 
 class PipelineLogger:
-    """流水线日志记录器，提供详细的格式化输出。"""
+    """流水线日志记录器。"""
+
+    LEVEL_PREFIX = {
+        "INFO": "   ",
+        "STAGE": ">>>",
+        "OK": " ✓ ",
+        "WARN": " ! ",
+        "ERROR": " ✗ ",
+        "PROGRESS": " → ",
+    }
+
+    STATUS_DISPLAY = {
+        TaskStatus.PENDING: "⏳ 等待中",
+        TaskStatus.PREDICTING: "🔄 推理中",
+        TaskStatus.PREDICTED: "📦 待体素化",
+        TaskStatus.VOXELIZING: "🔄 体素化中",
+        TaskStatus.COMPLETED: "✅ 完成",
+        TaskStatus.FAILED: "❌ 失败",
+    }
 
     def __init__(self, verbose: bool = True):
         self.verbose = verbose
@@ -113,85 +137,54 @@ class PipelineLogger:
         self._start_time = time.time()
 
     def _timestamp(self) -> str:
-        """获取相对时间戳。"""
-        elapsed = time.time() - self._start_time
-        return f"[{elapsed:8.2f}s]"
+        return f"[{time.time() - self._start_time:8.2f}s]"
 
     def _print(self, msg: str, level: str = "INFO"):
-        """线程安全的打印。"""
         with self._lock:
-            timestamp = self._timestamp()
-            prefix = {
-                "INFO": "   ",
-                "STAGE": ">>>",
-                "OK": " ✓ ",
-                "WARN": " ! ",
-                "ERROR": " ✗ ",
-                "PROGRESS": " → ",
-            }.get(level, "   ")
-            print(f"{timestamp} {prefix} {msg}")
+            prefix = self.LEVEL_PREFIX.get(level, "   ")
+            print(f"{self._timestamp()} {prefix} {msg}")
 
     def header(self, title: str):
-        """打印标题头。"""
         with self._lock:
             print("\n" + "=" * 60)
             print(f"  {title}")
             print("=" * 60)
 
     def section(self, title: str):
-        """打印分节标题。"""
         with self._lock:
-            print(f"\n{'─' * 40}")
-            print(f"  {title}")
-            print(f"{'─' * 40}")
+            print(f"\n{'─' * 40}\n  {title}\n{'─' * 40}")
 
     def stage(self, msg: str):
-        """打印阶段信息。"""
         self._print(msg, "STAGE")
 
     def info(self, msg: str):
-        """打印普通信息。"""
         if self.verbose:
             self._print(msg, "INFO")
 
     def ok(self, msg: str):
-        """打印成功信息。"""
         self._print(msg, "OK")
 
     def warn(self, msg: str):
-        """打印警告信息。"""
         self._print(msg, "WARN")
 
     def error(self, msg: str):
-        """打印错误信息。"""
         self._print(msg, "ERROR")
 
     def progress(self, msg: str):
-        """打印进度信息。"""
         self._print(msg, "PROGRESS")
 
-    def task_status(self, tasks: List[ImageTask]):
-        """打印任务状态表格。"""
+    def task_status(self, tasks: list[ImageTask]):
         with self._lock:
             print("\n┌─────┬────────────────────────────┬─────────────┐")
             print("│ No. │ 文件名                     │ 状态        │")
             print("├─────┼────────────────────────────┼─────────────┤")
             for task in tasks:
                 name = task.image_path.name[:24]
-                status_map = {
-                    TaskStatus.PENDING: "⏳ 等待中",
-                    TaskStatus.PREDICTING: "🔄 推理中",
-                    TaskStatus.PREDICTED: "📦 待体素化",
-                    TaskStatus.VOXELIZING: "🔄 体素化中",
-                    TaskStatus.COMPLETED: "✅ 完成",
-                    TaskStatus.FAILED: "❌ 失败",
-                }
-                status = status_map.get(task.status, "未知")
-                print(f"│ {task.index+1:3d} │ {name:<26} │ {status:<11} │")
-            print("└─────┴────────────────────────────┴─────────────┘")
+                status = self.STATUS_DISPLAY.get(task.status, "未知")
+                print(f"│ {task.index + 1:3d} │ {name:<26} │ {status:<11} │")
+            print("└─────┴────────────────────────────┴────────────��┘")
 
     def stats(self, stats: PipelineStats):
-        """打印统计信息。"""
         with self._lock:
             print("\n" + "=" * 60)
             print("  流水线执行统计")
@@ -206,119 +199,73 @@ class PipelineLogger:
             print("  ─────────────────────────────────")
             print(f"  平均推理时间:   {stats.avg_predict_time:.2f} 秒/张")
             print(f"  平均体素化时间: {stats.avg_voxel_time:.2f} 秒/张")
-            if stats.total_images > 1:
-                # 计算流水线效率
-                sequential_time = (
+            if stats.total_images > 1 and stats.total_time > 0:
+                sequential = (
                     stats.avg_predict_time + stats.avg_voxel_time
                 ) * stats.completed_images
-                efficiency = (
-                    sequential_time / stats.total_time if stats.total_time > 0 else 0
-                )
-                print(f"  流水线效率:     {efficiency:.1%}")
+                print(f"  流水线效率:     {sequential / stats.total_time:.1%}")
             print("=" * 60 + "\n")
 
 
 class PipelineProcessor:
-    """流水线处理器。
+    """流水线处理器，实现模型推理和体素化的并行处理。"""
 
-    实现模型推理和体素化的流水线并行处理。
-    支持上下文管理器，自动清理资源。
-
-    Example:
-        # 方式1: 直接使用（自动卸载）
-        processor = PipelineProcessor(config)
-        stats = processor.process(input_path, output_dir)
-
-        # 方式2: 上下文管理器（推荐，确保资源释放）
-        with PipelineProcessor(config) as processor:
-            stats = processor.process(input_path, output_dir)
-
-        # 方式3: 异步处理
-        processor = PipelineProcessor(config)
-        future = processor.process_async(input_path, output_dir)
-        # ... 做其他事情 ...
-        stats = future.result()  # 等待完成
-    """
-
-    def __init__(self, config: Optional[PipelineConfig] = None):
+    def __init__(self, config: PipelineConfig | None = None):
         self.config = config or PipelineConfig()
         self.log = PipelineLogger(self.config.verbose)
         self.stats = PipelineStats()
 
-        # 模型相关
         self._predictor = None
-        self._device = None
+        self._device: torch.device | None = None
         self._model_loaded = False
-
-        # 体素化器
         self._voxelizer = None
-
-        # 任务管理
-        self._tasks: List[ImageTask] = []
+        self._tasks: list[ImageTask] = []
         self._predict_queue: Queue = Queue()
         self._voxel_queue: Queue = Queue()
-
-        # 线程控制
         self._stop_event = threading.Event()
         self._predict_lock = threading.Lock()
-
-        # 异步执行器
-        self._async_executor: Optional[ThreadPoolExecutor] = None
-        self._async_future: Optional[Future] = None
+        self._async_executor: ThreadPoolExecutor | None = None
+        self._async_future: Future | None = None
 
     def __enter__(self):
-        """上下文管理器入口。"""
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """上下文管理器退出，确保资源释放。"""
         self.cleanup()
         return False
 
     def __del__(self):
-        """析构函数，确保资源释放。"""
         self.cleanup()
 
     def cleanup(self):
-        """清理所有资源。"""
         self._unload_model()
         self._cleanup_voxelizer()
         self._cleanup_async()
 
     def _unload_model(self):
-        """卸载模型，释放GPU/内存。"""
         if not self._model_loaded:
             return
 
         self.log.stage("卸载模型，释放内存...")
 
         try:
-            # 清除模型引用
             if self._predictor is not None:
-                # 将模型移到CPU（如果在GPU上）
                 if self._device and self._device.type != "cpu":
                     try:
                         self._predictor.cpu()
                     except Exception:
                         pass
-
-                # 删除模型
                 del self._predictor
                 self._predictor = None
 
-            # 清除设备引用
             self._device = None
             self._model_loaded = False
-
-            # 强制垃圾回收
             gc.collect()
 
-            # 清理GPU缓存
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
 
-            # 清理MPS缓存（Apple Silicon）
             if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
                 try:
                     torch.mps.empty_cache()
@@ -326,37 +273,30 @@ class PipelineProcessor:
                     pass
 
             self.log.ok("模型已卸载，内存已释放")
-
         except Exception as e:
             self.log.warn(f"模型卸载时出现警告: {e}")
 
     def _cleanup_voxelizer(self):
-        """清理体素化器。"""
         if self._voxelizer is not None:
             del self._voxelizer
             self._voxelizer = None
 
     def _cleanup_async(self):
-        """清理异步执行器。"""
         if self._async_executor is not None:
             self._async_executor.shutdown(wait=False)
             self._async_executor = None
         self._async_future = None
 
     def _detect_device(self) -> torch.device:
-        """检测可用设备。"""
         if self.config.device != "auto":
             return torch.device(self.config.device)
-
         if torch.cuda.is_available():
             return torch.device("cuda")
-        elif hasattr(torch, "mps") and torch.mps.is_available():
+        if hasattr(torch, "mps") and torch.mps.is_available():
             return torch.device("mps")
-        else:
-            return torch.device("cpu")
+        return torch.device("cpu")
 
     def _load_model(self) -> bool:
-        """加载SHARP模型到内存。"""
         self.log.stage("加载SHARP模型到内存...")
 
         try:
@@ -365,7 +305,6 @@ class PipelineProcessor:
             self._device = self._detect_device()
             self.log.info(f"使用设备: {self._device}")
 
-            # 加载检查点
             if self.config.checkpoint_path and self.config.checkpoint_path.exists():
                 self.log.info(f"从本地加载: {self.config.checkpoint_path}")
                 state_dict = torch.load(
@@ -382,7 +321,6 @@ class PipelineProcessor:
                     model_url, progress=True, map_location=self._device
                 )
 
-            # 创建预测器
             self._predictor = create_predictor(PredictorParams())
             self._predictor.load_state_dict(state_dict)
             self._predictor.eval()
@@ -405,11 +343,11 @@ class PipelineProcessor:
             return False
 
     def _load_voxelizer(self):
-        """加载体素化器。"""
         from aylm.tools.pointcloud_voxelizer import PointCloudVoxelizer, VoxelizerConfig
 
-        vox_config = VoxelizerConfig(voxel_size=self.config.voxel_size)
-        self._voxelizer = PointCloudVoxelizer(config=vox_config)
+        self._voxelizer = PointCloudVoxelizer(
+            config=VoxelizerConfig(voxel_size=self.config.voxel_size)
+        )
         self.log.info(f"体素化器已初始化 (体素尺寸: {self.config.voxel_size}m)")
 
     @torch.no_grad()
@@ -542,27 +480,23 @@ class PipelineProcessor:
             logger.exception(f"体素化异常详情 - {task.ply_output_path.name}")
             return False
 
-    def _collect_images(self, input_path: Path) -> List[Path]:
-        """收集输入目录中的图像文件。"""
+    def _collect_images(self, input_path: Path) -> list[Path]:
         extensions = {".jpg", ".jpeg", ".png", ".heic", ".webp", ".tiff", ".bmp"}
 
         if input_path.is_file():
-            if input_path.suffix.lower() in extensions:
-                return [input_path]
-            return []
+            return [input_path] if input_path.suffix.lower() in extensions else []
 
         images = []
         for ext in extensions:
             images.extend(input_path.glob(f"*{ext}"))
             images.extend(input_path.glob(f"*{ext.upper()}"))
-
         return sorted(images)
 
     def process(
         self,
         input_path: Path,
         output_dir: Path,
-        voxel_output_dir: Optional[Path] = None,
+        voxel_output_dir: Path | None = None,
     ) -> PipelineStats:
         """执行流水线处理。
 
@@ -669,8 +603,8 @@ class PipelineProcessor:
         self,
         input_path: Path,
         output_dir: Path,
-        voxel_output_dir: Optional[Path] = None,
-        callback: Optional[Callable[[PipelineStats], None]] = None,
+        voxel_output_dir: Path | None = None,
+        callback: Callable[[PipelineStats], None] | None = None,
     ) -> Future:
         """异步执行流水线处理。
 
@@ -718,9 +652,7 @@ class PipelineProcessor:
             return False
         return not self._async_future.done()
 
-    def wait_for_completion(
-        self, timeout: Optional[float] = None
-    ) -> Optional[PipelineStats]:
+    def wait_for_completion(self, timeout: float | None = None) -> PipelineStats | None:
         """等待异步处理完成。
 
         Args:
@@ -767,8 +699,8 @@ class PipelineProcessor:
 
         # 使用线程池执行体素化（推理在主线程，因为GPU操作需要同步）
         with ThreadPoolExecutor(max_workers=1) as voxel_executor:
-            voxel_future: Optional[Future] = None
-            prev_task_for_voxel: Optional[ImageTask] = None
+            voxel_future: Future | None = None
+            prev_task_for_voxel: ImageTask | None = None
 
             for i, task in enumerate(self._tasks):
                 self.log.info(f"\n{'─' * 40}")
@@ -817,7 +749,7 @@ def run_pipeline(
     input_path: str,
     output_dir: str,
     voxel_size: float = 0.005,
-    checkpoint_path: Optional[str] = None,
+    checkpoint_path: str | None = None,
     verbose: bool = True,
     auto_unload: bool = True,
 ) -> PipelineStats:
@@ -860,10 +792,10 @@ def run_pipeline_async(
     input_path: str,
     output_dir: str,
     voxel_size: float = 0.005,
-    checkpoint_path: Optional[str] = None,
+    checkpoint_path: str | None = None,
     verbose: bool = True,
-    callback: Optional[Callable[[PipelineStats], None]] = None,
-) -> Tuple["PipelineProcessor", Future]:
+    callback: Callable[[PipelineStats], None] | None = None,
+) -> tuple[PipelineProcessor, Future]:
     """便捷函数：异步运行流水线处理。
 
     Args:

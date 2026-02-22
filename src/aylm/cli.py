@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
-"""AYLM CLI - 命令行接口.
+"""AYLM CLI - 命令行接口."""
 
-提供子命令:
-- setup: 检查环境、安装依赖、下载模型
-- predict: 运行SHARP预测
-- voxelize: 运行体素化
-- process: 完整流程
-- pipeline: 流水线处理（推理与体素化并行）
-"""
+from __future__ import annotations
 
 import argparse
 import logging
@@ -18,6 +12,9 @@ from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+# 支持的图像扩展名
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".webp"}
 
 
 def get_version() -> str:
@@ -32,18 +29,40 @@ def get_version() -> str:
 
 def get_project_root() -> Path:
     """获取项目根目录."""
-    if "AYLM_ROOT" in os.environ:
-        return Path(os.environ["AYLM_ROOT"])
-    current = Path(__file__).resolve().parent.parent.parent.parent
-    if (current / "pyproject.toml").exists():
-        return current
-    return Path.cwd()
+    if root := os.environ.get("AYLM_ROOT"):
+        return Path(root)
+    current = Path(__file__).resolve().parents[3]
+    return current if (current / "pyproject.toml").exists() else Path.cwd()
 
 
-def print_step(counter: list, msg: str):
-    """打印步骤信息，使用动态计数器."""
+def get_model_path() -> Path:
+    """获取模型路径."""
+    return get_project_root() / "models" / "sharp_2572gikvuh.pt"
+
+
+def print_step(counter: list[int], msg: str) -> None:
+    """打印步骤信息."""
     counter[0] += 1
     print(f"[{counter[0]}] {msg}")
+
+
+def check_model_exists() -> bool:
+    """检查模型是否存在."""
+    return get_model_path().exists()
+
+
+def require_model() -> Path | None:
+    """检查模型，不存在则报错并返回 None."""
+    model_path = get_model_path()
+    if not model_path.exists():
+        logger.error("模型不存在，请先运行: aylm setup --download")
+        return None
+    return model_path
+
+
+def get_images(input_dir: Path) -> list[Path]:
+    """获取目录中的图像文件."""
+    return sorted(f for f in input_dir.iterdir() if f.suffix.lower() in IMAGE_EXTS)
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
@@ -60,21 +79,13 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
     print_step(step, "检查依赖...")
     deps = ["numpy", "torch", "scipy", "plyfile", "PIL", "cv2"]
-    missing = []
-    for dep in deps:
-        try:
-            __import__(dep)
-            print(f"    + {dep}")
-        except ImportError:
-            print(f"    - {dep} (未安装)")
-            missing.append(dep)
-
+    missing = [dep for dep in deps if not _check_import(dep)]
     if missing:
         logger.warning("部分依赖未安装，请运行: pip install -e .")
 
     print_step(step, "检查模型检查点...")
     model_url = "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt"
-    model_path = get_project_root() / "models" / "sharp_2572gikvuh.pt"
+    model_path = get_model_path()
 
     if model_path.exists():
         print(f"    模型已存在: {model_path}")
@@ -104,6 +115,17 @@ def cmd_setup(args: argparse.Namespace) -> int:
     return 0
 
 
+def _check_import(module: str) -> bool:
+    """检查模块是否可导入."""
+    try:
+        __import__(module)
+        print(f"    + {module}")
+        return True
+    except ImportError:
+        print(f"    - {module} (未安装)")
+        return False
+
+
 def cmd_predict(args: argparse.Namespace) -> int:
     """运行SHARP预测."""
     step = [0]
@@ -118,17 +140,14 @@ def cmd_predict(args: argparse.Namespace) -> int:
         logger.error(f"输入目录不存在: {input_dir}")
         return 1
 
-    exts = {".jpg", ".jpeg", ".png", ".heic", ".webp"}
-    images = [f for f in input_dir.iterdir() if f.suffix.lower() in exts]
+    images = get_images(input_dir)
     if not images:
         logger.error("未找到图像文件")
         return 1
     print(f"    找到 {len(images)} 张图像")
 
     print_step(step, "检查模型...")
-    model_path = root / "models" / "sharp_2572gikvuh.pt"
-    if not model_path.exists():
-        logger.error("模型不存在，请先运行: aylm setup --download")
+    if not (model_path := require_model()):
         return 1
     print(f"    模型: {model_path}")
 
@@ -147,12 +166,10 @@ def cmd_predict(args: argparse.Namespace) -> int:
     ]
     result = subprocess.run(cmd, capture_output=not args.verbose)
     if result.returncode != 0:
-        if not args.verbose:
-            logger.error(
-                f"预测失败: {result.stderr.decode() if result.stderr else '未知错误'}"
-            )
-        else:
-            logger.error("预测失败")
+        err = (
+            result.stderr.decode() if result.stderr and not args.verbose else "未知错误"
+        )
+        logger.error(f"预测失败: {err}" if not args.verbose else "预测失败")
         return 1
 
     print(f"\n预测完成! 输出: {output_dir}")
@@ -169,12 +186,11 @@ def cmd_voxelize(args: argparse.Namespace) -> int:
     output_dir = Path(args.output) if args.output else input_path / "voxelized"
 
     print_step(step, "检查输入...")
-    if input_path.is_file():
-        ply_files = [input_path]
-    else:
-        ply_files = [
-            f for f in input_path.glob("*.ply") if not f.name.startswith("vox")
-        ]
+    ply_files = (
+        [input_path]
+        if input_path.is_file()
+        else [f for f in input_path.glob("*.ply") if not f.name.startswith("vox")]
+    )
     if not ply_files:
         logger.error(f"未找到PLY文件: {input_path}")
         return 1
@@ -189,14 +205,14 @@ def cmd_voxelize(args: argparse.Namespace) -> int:
 
     print_step(step, "处理文件...")
     output_dir.mkdir(parents=True, exist_ok=True)
-    config = VoxelizerConfig(voxel_size=args.voxel_size)
-    processor = PointCloudVoxelizer(config=config)
+    processor = PointCloudVoxelizer(config=VoxelizerConfig(voxel_size=args.voxel_size))
     success = 0
 
     for ply in ply_files:
-        out = output_dir / f"vox_{ply.name}"
         try:
-            processor.process(ply, out, transform_coords=False)
+            processor.process(
+                ply, output_dir / f"vox_{ply.name}", transform_coords=False
+            )
             success += 1
             print(f"    + {ply.name}")
         except Exception as e:
@@ -210,85 +226,255 @@ def cmd_process(args: argparse.Namespace) -> int:
     """运行完整流程."""
     print(f"AYLM v{get_version()} - 完整流程\n")
 
-    print("=" * 40)
-    print("阶段 1/3: 环境设置")
-    print("=" * 40)
-    setup_args = argparse.Namespace(download=True)
-    if cmd_setup(setup_args) != 0:
-        return 1
+    stages = [
+        ("1/3: 环境设置", cmd_setup, argparse.Namespace(download=True)),
+        (
+            "2/3: SHARP预测",
+            cmd_predict,
+            argparse.Namespace(
+                input=args.input, output=args.output, verbose=args.verbose
+            ),
+        ),
+    ]
 
-    print("\n" + "=" * 40)
-    print("阶段 2/3: SHARP预测")
-    print("=" * 40)
-    predict_args = argparse.Namespace(
-        input=args.input, output=args.output, verbose=args.verbose
-    )
-    if cmd_predict(predict_args) != 0:
-        return 1
+    for title, func, stage_args in stages:
+        print("=" * 40)
+        print(f"阶段 {title}")
+        print("=" * 40)
+        if func(stage_args) != 0:
+            return 1
+        print()
 
-    print("\n" + "=" * 40)
+    print("=" * 40)
     print("阶段 3/3: 体素化")
     print("=" * 40)
-    root = get_project_root()
-    vox_input = Path(args.output) if args.output else root / "outputs/output_gaussians"
-    vox_args = argparse.Namespace(input=str(vox_input), output=None, voxel_size=0.005)
-    if cmd_voxelize(vox_args) != 0:
+    vox_input = (
+        Path(args.output)
+        if args.output
+        else get_project_root() / "outputs/output_gaussians"
+    )
+    if (
+        cmd_voxelize(
+            argparse.Namespace(input=str(vox_input), output=None, voxel_size=0.005)
+        )
+        != 0
+    ):
         return 1
 
     print("\n完整流程完成!")
     return 0
 
 
+def cmd_video_process(args: argparse.Namespace) -> int:
+    """处理视频文件，提取帧并进行3D重建."""
+    step = [0]
+    print(f"AYLM v{get_version()} - 视频处理\n")
+
+    video_path = Path(args.input)
+    if not video_path.exists():
+        logger.error(f"视频文件不存在: {video_path}")
+        return 1
+
+    print_step(step, "检查输入...")
+    print(f"    视频: {video_path}")
+
+    print_step(step, "加载配置...")
+    try:
+        from aylm.tools.video_config import load_or_create_config
+        from aylm.tools.video_types import FrameExtractionMethod, GPUAcceleration
+
+        config = load_or_create_config(Path(args.config) if args.config else None)
+        if args.frame_interval:
+            config.frame_interval = args.frame_interval
+            config.frame_extraction_method = FrameExtractionMethod.INTERVAL
+        if args.use_gpu:
+            config.gpu_acceleration = GPUAcceleration.AUTO
+        print(f"    帧提取方法: {config.frame_extraction_method.value}")
+        print(f"    帧间隔: {config.frame_interval}s")
+        print(f"    GPU加速: {config.gpu_acceleration.value}")
+    except ImportError as e:
+        logger.error(f"导入配置模块失败: {e}")
+        return 1
+
+    output_dir = (
+        Path(args.output)
+        if args.output
+        else get_project_root() / "outputs/video_output"
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"    输出目录: {output_dir}")
+
+    if not (model_path := require_model()):
+        return 1
+    print(f"    模型: {model_path.name}")
+
+    print_step(step, "启动视频处理流水线...")
+    try:
+        from aylm.tools.video_pipeline import (
+            VideoPipelineConfig,
+            VideoPipelineProcessor,
+        )
+
+        pipeline_config = VideoPipelineConfig(
+            video_config=config,
+            use_gpu=args.use_gpu,
+            verbose=args.verbose,
+            checkpoint_path=model_path,
+        )
+        stats = VideoPipelineProcessor(pipeline_config).process(video_path, output_dir)
+
+        print("\n视频处理完成!")
+        print(f"  提取帧数: {stats.total_frames_extracted}")
+        print(f"  处理帧数: {stats.total_frames_processed}")
+        print(f"  总耗时: {stats.total_time:.1f}s")
+        return 0 if stats.failed_videos == 0 else 1
+
+    except ImportError as e:
+        logger.error(f"导入视频处理模块失败: {e}")
+        logger.error("请确保已安装所有依赖: pip install -e .")
+        return 1
+    except Exception as e:
+        logger.error(f"视频处理失败: {e}")
+        return 1
+
+
+def cmd_video_extract(args: argparse.Namespace) -> int:
+    """从视频中提取帧."""
+    step = [0]
+    print(f"AYLM v{get_version()} - 视频帧提取\n")
+
+    video_path = Path(args.input)
+    if not video_path.exists():
+        logger.error(f"视频文件不存在: {video_path}")
+        return 1
+
+    print_step(step, "检查输入...")
+    print(f"    视频: {video_path}")
+
+    output_dir = (
+        Path(args.output)
+        if args.output
+        else get_project_root() / "outputs/extracted_frames"
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"    输出目录: {output_dir}")
+
+    print_step(step, "加载配置...")
+    try:
+        from aylm.tools.video_config import load_or_create_config
+        from aylm.tools.video_types import FrameExtractionMethod
+
+        config = load_or_create_config(Path(args.config) if args.config else None)
+        if args.frame_interval:
+            config.frame_interval = args.frame_interval
+            config.frame_extraction_method = FrameExtractionMethod.INTERVAL
+        print(f"    帧提取方法: {config.frame_extraction_method.value}")
+        print(f"    帧间隔: {config.frame_interval}s")
+    except ImportError as e:
+        logger.error(f"导入配置模块失败: {e}")
+        return 1
+
+    print_step(step, "提取帧...")
+    try:
+        from aylm.tools.video_extractor import VideoExtractor
+
+        result = VideoExtractor(config).extract_frames(video_path, output_dir)
+
+        if result.success:
+            print("\n帧提取完成!")
+            print(f"  提取帧数: {result.total_extracted}")
+            print(f"  耗时: {result.extraction_time:.1f}s")
+            print(f"  输出目录: {output_dir}")
+            return 0
+        logger.error(f"帧提取失败: {result.error_message}")
+        return 1
+
+    except ImportError as e:
+        logger.error(f"导入帧提取模块失败: {e}")
+        logger.error("请确保已安装所有依赖: pip install -e .")
+        return 1
+    except Exception as e:
+        logger.error(f"帧提取失败: {e}")
+        return 1
+
+
+def cmd_video_play(args: argparse.Namespace) -> int:
+    """播放体素序列."""
+    step = [0]
+    print(f"AYLM v{get_version()} - 体素序列播放\n")
+
+    input_path = Path(args.input)
+    if not input_path.exists():
+        logger.error(f"输入路径不存在: {input_path}")
+        return 1
+
+    print_step(step, "检查输入...")
+    if not input_path.is_dir():
+        logger.error("输入必须是包含PLY文件的目录")
+        return 1
+
+    ply_files = sorted(input_path.glob("*.ply"))
+    if not ply_files:
+        logger.error(f"目录中未找到PLY文件: {input_path}")
+        return 1
+    print(f"    目录: {input_path}")
+    print(f"    PLY文件数: {len(ply_files)}")
+
+    print_step(step, "启动播放器...")
+    try:
+        from aylm.tools.voxel_player import PlayerConfig, VoxelPlayer
+
+        player = VoxelPlayer(PlayerConfig(fps=args.fps, loop=args.loop))
+        player.load_sequence(input_path)
+        player.play()
+        print("\n播放结束")
+        return 0
+
+    except ImportError as e:
+        logger.error(f"导入播放器模块失败: {e}")
+        logger.error("请确保已安装所有依赖: pip install -e .")
+        return 1
+    except Exception as e:
+        logger.error(f"播放失败: {e}")
+        return 1
+
+
 def cmd_pipeline(args: argparse.Namespace) -> int:
     """运行流水线处理（推理与体素化并行）."""
-    # 处理 verbose/quiet 参数：--quiet 优先级高于 --verbose
     verbose = not args.quiet if args.quiet else args.verbose
-
     print(f"AYLM v{get_version()} - 流水线处理\n")
 
     root = get_project_root()
     input_dir = Path(args.input) if args.input else root / "inputs/input_images"
     output_dir = Path(args.output) if args.output else root / "outputs/output_gaussians"
 
-    # 检查输入目录
     if not input_dir.exists():
         logger.error(f"输入目录不存在: {input_dir}")
         return 1
 
-    # 扫描支持的图像文件
-    exts = {".jpg", ".jpeg", ".png", ".heic", ".webp"}
-    images = sorted([f for f in input_dir.iterdir() if f.suffix.lower() in exts])
-
+    images = get_images(input_dir)
     if not images:
         logger.error(f"未找到图像文件: {input_dir}")
         return 1
 
-    # 显示输入信息
     print(f"[输入] 目录: {input_dir}")
     print(f"[输入] 图像数量: {len(images)}")
-    if verbose and len(images) <= 10:
-        for img in images:
+    if verbose:
+        for img in images[: 10 if len(images) <= 10 else 5]:
             print(f"       - {img.name}")
-    elif verbose:
-        for img in images[:5]:
-            print(f"       - {img.name}")
-        print(f"       ... 还有 {len(images) - 5} 张")
+        if len(images) > 10:
+            print(f"       ... 还有 {len(images) - 5} 张")
 
-    # 检查模型
-    model_path = root / "models" / "sharp_2572gikvuh.pt"
-    if not model_path.exists():
-        logger.error("模型不存在，请先运行: aylm setup --download")
+    if not (model_path := require_model()):
         return 1
     print(f"[模型] {model_path.name}")
 
-    # 显示配置
     print("\n[配置]")
     print(f"  体素尺寸: {args.voxel_size}m")
     print(f"  移除地面: {'否' if args.keep_ground else '是'}")
     print(f"  坐标转换: {'是' if args.transform else '否'}")
     print(f"  详细输出: {'是' if verbose else '否'}")
 
-    # 显示流水线策略
     print("\n[流水线策略]")
     print("  模式: 推理与体素化并行")
     print("  线程: 推理(主线程/GPU) + 体素化(工作线程/CPU)")
@@ -308,11 +494,8 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
             checkpoint_path=model_path,
             verbose=verbose,
         )
+        stats = PipelineProcessor(config).process(input_dir, output_dir)
 
-        processor = PipelineProcessor(config)
-        stats = processor.process(input_dir, output_dir)
-
-        # 显示最终统计
         print("\n" + "=" * 50)
         print("[完成] 流水线处理结束")
         print(f"  成功: {stats.successful_images}/{stats.total_images}")
@@ -336,8 +519,7 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
 def create_parser() -> argparse.ArgumentParser:
     """创建命令行解析器."""
     parser = argparse.ArgumentParser(
-        prog="aylm",
-        description="AYLM - 3D Gaussian Splatting 工具",
+        prog="aylm", description="AYLM - 3D Gaussian Splatting 工具"
     )
     parser.add_argument("-V", "--version", action="version", version=get_version())
     subs = parser.add_subparsers(dest="command", title="命令")
@@ -387,10 +569,42 @@ def create_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=cmd_pipeline)
 
+    # video 子命令组
+    video_parser = subs.add_parser("video", help="视频处理命令")
+    video_subs = video_parser.add_subparsers(dest="video_command", title="视频子命令")
+
+    # video process
+    p = video_subs.add_parser("process", help="处理视频文件，提取帧并进行3D重建")
+    p.add_argument("-i", "--input", required=True, help="输入视频文件")
+    p.add_argument("-o", "--output", help="输出目录")
+    p.add_argument("-c", "--config", help="配置文件路径(YAML)")
+    p.add_argument("--frame-interval", type=float, help="帧间隔(秒)，覆盖配置文件设置")
+    p.add_argument("--compression", type=float, default=1.0, help="压缩倍数(默认1.0)")
+    p.add_argument("--use-gpu", action="store_true", help="启用GPU加速")
+    p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
+    p.set_defaults(func=cmd_video_process)
+
+    # video extract
+    p = video_subs.add_parser("extract", help="从视频中提取帧")
+    p.add_argument("-i", "--input", required=True, help="输入视频文件")
+    p.add_argument("-o", "--output", help="输出目录")
+    p.add_argument("-c", "--config", help="配置文件路径(YAML)")
+    p.add_argument("--frame-interval", type=float, help="帧间隔(秒)，覆盖配置文件设置")
+    p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
+    p.set_defaults(func=cmd_video_extract)
+
+    # video play
+    p = video_subs.add_parser("play", help="播放体素序列")
+    p.add_argument("-i", "--input", required=True, help="体素序列目录")
+    p.add_argument("--fps", type=float, default=10.0, help="播放帧率(默认10)")
+    p.add_argument("--loop", action="store_true", help="循环播放")
+    p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
+    p.set_defaults(func=cmd_video_play)
+
     return parser
 
 
-def main():
+def main() -> int:
     """CLI入口点."""
     parser = create_parser()
     args = parser.parse_args()
@@ -398,6 +612,13 @@ def main():
     if args.command is None:
         parser.print_help()
         return 0
+
+    if args.command == "video" and (
+        not hasattr(args, "video_command") or args.video_command is None
+    ):
+        print("请指定视频子命令: process, extract, play")
+        print("使用 'aylm video --help' 查看详细帮助")
+        return 1
 
     return args.func(args)
 

@@ -39,6 +39,8 @@ outputs/
 # Input files (user data)
 inputs/input_images/*
 !inputs/input_images/.gitkeep
+inputs/videos/*
+!inputs/videos/.gitkeep
 
 # IDE
 .idea/
@@ -66,3 +68,6 @@ htmlcov/
 # Logs
 *.log
 logs/
+
+# Temporary docs (not for production)
+docs/requirements_video_processing.md

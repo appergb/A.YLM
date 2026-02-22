@@ -8,6 +8,8 @@
 - ENU: X东, Y北, Z上 (右手系)
 """
 
+from pathlib import Path
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -84,10 +86,7 @@ def transform_for_navigation(input_path: str, output_path: str) -> int:
         FileNotFoundError: 输入文件不存在
         ValueError: PLY文件格式错误
     """
-    from pathlib import Path
-
-    input_file = Path(input_path)
-    if not input_file.exists():
+    if not Path(input_path).exists():
         raise FileNotFoundError(f"输入文件不存在: {input_path}")
 
     # 读取PLY文件
@@ -128,13 +127,15 @@ def _apply_transform(
     return (rotation @ points.T).T
 
 
-def _read_ply(filepath: str) -> tuple:
+def _read_ply(
+    filepath: str,
+) -> tuple[list[str], NDArray[np.float64], bool, list[list[int]] | None]:
     """读取PLY文件，返回头部、点坐标和颜色信息。"""
-    header_lines = []
+    header_lines: list[str] = []
     vertex_count = 0
     has_colors = False
 
-    with open(filepath, "r", encoding="utf-8") as f:
+    with open(filepath, encoding="utf-8") as f:
         # 解析头部
         for line in f:
             header_lines.append(line.rstrip("\n"))
@@ -151,8 +152,8 @@ def _read_ply(filepath: str) -> tuple:
             raise ValueError("PLY文件中未找到顶点数据")
 
         # 读取顶点数据
-        points = []
-        colors = [] if has_colors else None
+        points: list[list[float]] = []
+        colors: list[list[int]] | None = [] if has_colors else None
 
         for _ in range(vertex_count):
             line = f.readline()
@@ -168,10 +169,10 @@ def _read_ply(filepath: str) -> tuple:
 
 def _write_ply(
     filepath: str,
-    header_lines: list,
+    header_lines: list[str],
     points: NDArray[np.float64],
     has_colors: bool,
-    colors: list | None,
+    colors: list[list[int]] | None,
 ) -> None:
     """写入PLY文件。"""
     with open(filepath, "w", encoding="utf-8") as f:
