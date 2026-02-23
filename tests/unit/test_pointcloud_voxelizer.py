@@ -152,23 +152,26 @@ class TestDetectGroundNumpy:
 
     def test_detects_ground_plane(self) -> None:
         np.random.seed(42)
+        # OpenCV 坐标系: Y 轴向下，地面在 Y 最大值处
         ground_x = np.random.rand(100) * 10
-        ground_y = np.random.rand(100) * 10
-        ground_z = np.zeros(100) + np.random.randn(100) * 0.01
+        ground_z = np.random.rand(100) * 10
+        ground_y = np.ones(100) * 5.0 + np.random.randn(100) * 0.01  # Y=5 是地面
         ground = np.column_stack([ground_x, ground_y, ground_z])
 
         above = np.random.rand(50, 3) * 5
-        above[:, 2] += 1.0
+        above[:, 1] = np.random.rand(50) * 3  # Y 在 0-3 之间（地面上方）
 
         points = np.vstack([ground, above]).astype(np.float64)
         pc = PointCloud(points=points)
 
         config = VoxelizerConfig(
-            ransac_distance_threshold=0.05, ransac_num_iterations=100
+            ransac_distance_threshold=0.05,
+            ransac_num_iterations=100,
         )
         voxelizer = PointCloudVoxelizer(config=config)
 
-        result, plane = voxelizer._detect_ground_numpy(pc, config)
+        # ground_normal_threshold 是方法参数，不是 config 参数
+        result, plane = voxelizer._detect_ground_numpy(pc, config, 0.8)
         assert len(result.points) < len(pc.points)
         assert len(plane) == 4
 
