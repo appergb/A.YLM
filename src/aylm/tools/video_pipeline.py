@@ -1,13 +1,6 @@
 """视频处理流水线模块。
 
-实现三阶段并行流水线：
-1. 异步帧提取（边提取边处理）
-2. SHARP推理
-3. GPU体素化
-
-流水线示意图:
-    帧提取线程: [====提取帧1====][====提取帧2====][====提取帧3====]...
-    处理线程:              [====推理+体素化帧1====][====推理+体素化帧2====]...
+实现帧提取与处理的并行流水线：帧提取、SHARP推理、体素化、语义融合。
 """
 
 import gc
@@ -32,6 +25,11 @@ from .video_types import (
 
 logger = logging.getLogger(__name__)
 
+# 模块级常量
+DEFAULT_NAV_VOXEL_SIZE = 0.05  # 导航体素大小 5cm
+DEFAULT_FOV_DEGREES = 60.0  # 相机视场角
+DEFAULT_DENSITY_THRESHOLD = 3  # 体素密度阈值
+
 
 @dataclass
 class VideoPipelineConfig:
@@ -47,6 +45,13 @@ class VideoPipelineConfig:
     device: str = "auto"
     verbose: bool = True
     auto_unload: bool = True
+    # 语义检测配置
+    enable_semantic: bool = True  # 是否启用语义检测
+    semantic_model: str = "yolo11n-seg.pt"  # YOLO 模型
+    semantic_confidence: float = 0.5  # 检测置信度阈值
+    colorize_semantic: bool = True  # 是否根据语义标签着色
+    # 导航输出配置
+    output_navigation_ply: bool = True  # 是否输出导航用点云（机器人坐标系）
 
 
 class VideoPipelineProcessor:
@@ -67,6 +72,7 @@ class VideoPipelineProcessor:
         self._device: torch.device | None = None
         self._model_loaded = False
         self._voxelizer: PointCloudVoxelizer | None = None
+        self._detector = None  # YOLO 语义检测器
         self._frame_queue: queue.Queue[FrameInfo] = queue.Queue(
             maxsize=self.config.frame_queue_size
         )
@@ -152,6 +158,194 @@ class VideoPipelineProcessor:
         self._voxelizer = PointCloudVoxelizer(config=vox_config)
         logger.info(f"Voxelizer initialized (voxel_size: {self.config.voxel_size}m)")
 
+    def _load_detector(self):
+        """加载 YOLO 语义检测器。"""
+        from aylm.tools.object_detector import DetectorConfig, ObjectDetector
+
+        logger.info("Loading YOLO semantic detector...")
+        detector_config = DetectorConfig(
+            model_name=self.config.semantic_model,
+            confidence_threshold=self.config.semantic_confidence,
+            device=self.config.device,
+        )
+        self._detector = ObjectDetector(detector_config)
+        self._detector.load()
+        logger.info(f"Semantic detector loaded (model: {self.config.semantic_model})")
+
+    def _cleanup_detector(self):
+        """清理语义检测器。"""
+        if self._detector is not None:
+            logger.info("Unloading semantic detector...")
+            self._detector.unload()
+            del self._detector
+            self._detector = None
+
+    def _apply_semantic_fusion(
+        self,
+        frame_path: Path,
+        voxel_ply_path: Path,
+        detections_dir: Path,
+        navigation_dir: Path | None = None,
+        focal_length: float | None = None,
+    ) -> None:
+        """对体素化后的点云应用语义融合。
+
+        Args:
+            frame_path: 原始帧图像路径
+            voxel_ply_path: 体素化后的 PLY 文件路径
+            detections_dir: 检测结果图片保存目录
+            navigation_dir: 导航用点云输出目录（机器人坐标系）
+            focal_length: SHARP 推理时使用的焦距（像素），如果为 None 则估算
+        """
+        import cv2
+        import numpy as np
+
+        from aylm.tools.semantic_fusion import FusionConfig, SemanticFusion
+        from aylm.tools.semantic_types import CameraIntrinsics
+
+        logger.debug(f"Applying semantic fusion: {frame_path.name}")
+
+        try:
+            # 读取原始图像
+            image = cv2.imread(str(frame_path))
+            if image is None:
+                logger.warning(
+                    f"Cannot read image, skipping semantic fusion: {frame_path}"
+                )
+                return
+
+            height, width = image.shape[:2]
+
+            # 执行目标检测
+            detections = self._detector.detect(image, return_masks=True)
+            logger.debug(f"Detected {len(detections)} objects")
+
+            # 保存检测结果可视化图片
+            if detections:
+                detection_image_path = voxel_ply_path.parent / f"det_{frame_path.name}"
+                self._detector.save_detection_image(
+                    image, detections, detection_image_path, draw_masks=True
+                )
+                logger.debug(f"Detection image saved: {detection_image_path.name}")
+
+            if not detections:
+                logger.debug("No detections, skipping semantic fusion")
+                return
+
+            # 读取体素化后的点云
+            try:
+                from plyfile import PlyData
+            except ImportError:
+                logger.warning("plyfile not installed, skipping semantic fusion")
+                return
+
+            ply_data = PlyData.read(str(voxel_ply_path))
+            vertex = ply_data["vertex"]
+
+            points = np.column_stack([vertex["x"], vertex["y"], vertex["z"]]).astype(
+                np.float64
+            )
+            colors = None
+            if "red" in vertex.data.dtype.names:
+                colors = (
+                    np.column_stack(
+                        [vertex["red"], vertex["green"], vertex["blue"]]
+                    ).astype(np.float64)
+                    / 255.0
+                )
+
+            # 使用 SHARP 的精确焦距，如果没有则估算
+            if focal_length is not None:
+                f_px = focal_length
+                logger.debug(f"Using SHARP focal length: {f_px:.1f}px")
+            else:
+                f_px = max(width, height)
+                logger.debug(f"Estimated focal length: {f_px:.1f}px")
+
+            intrinsics = CameraIntrinsics(fx=f_px, fy=f_px, cx=width / 2, cy=height / 2)
+
+            # 执行语义融合
+            fusion_config = FusionConfig(
+                min_confidence=self.config.semantic_confidence,
+                colorize_semantic=self.config.colorize_semantic,
+            )
+            fusion = SemanticFusion(fusion_config)
+            semantic_pc = fusion.fuse(
+                points=points,
+                colors=colors,
+                detections=detections,
+                image_shape=(height, width),
+                intrinsics=intrinsics,
+            )
+
+            # 保存带语义标签的 PLY（覆盖原文件）
+            fusion.save_semantic_ply(
+                semantic_pc,
+                voxel_ply_path,
+                include_semantic_colors=self.config.colorize_semantic,
+            )
+            logger.debug(f"Semantic fusion completed: {voxel_ply_path.name}")
+
+            # 提取障碍物并导出 JSON（用于导航系统）
+            from aylm.tools.obstacle_marker import ObstacleMarker, ObstacleMarkerConfig
+
+            marker = ObstacleMarker(ObstacleMarkerConfig())
+            obstacles = marker.extract_obstacles_from_detections(
+                points=points,
+                detections=detections,
+                image_shape=(height, width),
+                intrinsics=intrinsics,
+            )
+
+            if obstacles:
+                json_path = (
+                    voxel_ply_path.parent / f"{voxel_ply_path.stem}_obstacles.json"
+                )
+                marker.export_to_json(obstacles, json_path)
+                logger.debug(f"Obstacles exported: {json_path.name}")
+
+            # 输出导航用点云（机器人坐标系）
+            if navigation_dir is not None and self.config.output_navigation_ply:
+                self._save_navigation_ply(
+                    semantic_pc, voxel_ply_path, navigation_dir, frame_path.stem, fusion
+                )
+
+        except Exception as e:
+            logger.warning(f"Semantic fusion failed: {e}")
+            logger.exception(f"Semantic fusion error - {frame_path.name}")
+
+    def _save_navigation_ply(
+        self,
+        semantic_pc,
+        voxel_ply_path: Path,
+        navigation_dir: Path,
+        frame_stem: str,
+        fusion=None,
+    ) -> None:
+        """保存导航用点云（转换到机器人坐标系，体素化）。
+
+        Args:
+            semantic_pc: 语义点云
+            voxel_ply_path: 原始体素化 PLY 路径
+            navigation_dir: 导航输出目录
+            frame_stem: 帧文件名（不含扩展名）
+            fusion: SemanticFusion 实例（可选，避免重复创建）
+        """
+        try:
+            if fusion is None:
+                from aylm.tools.semantic_fusion import SemanticFusion
+
+                fusion = SemanticFusion()
+
+            nav_path = navigation_dir / f"nav_{frame_stem}.ply"
+            fusion.save_navigation_ply(
+                semantic_pc, nav_path, voxel_size=DEFAULT_NAV_VOXEL_SIZE
+            )
+            logger.debug(f"Navigation PLY saved: {nav_path.name}")
+
+        except Exception as e:
+            logger.warning(f"Failed to save navigation PLY: {e}")
+
     def _extraction_worker(
         self,
         video_path: Path,
@@ -193,8 +387,21 @@ class VideoPipelineProcessor:
         frame_info: FrameInfo,
         ply_output_dir: Path,
         voxel_output_dir: Path,
+        detections_dir: Path | None = None,
+        navigation_dir: Path | None = None,
     ) -> bool:
-        """处理单帧：推理 + 体素化。"""
+        """处理单帧：推理 + 体素化 + 语义融合（可选）。
+
+        Args:
+            frame_info: 帧信息
+            ply_output_dir: PLY 输出目录
+            voxel_output_dir: 体素化输出目录
+            detections_dir: 检测结果图片目录
+            navigation_dir: 导航用点云输出目录（机器人坐标系）
+
+        Returns:
+            是否处理成功
+        """
         import torch.nn.functional as F
         from sharp.utils import io
         from sharp.utils.gaussians import save_ply, unproject_gaussians
@@ -264,6 +471,16 @@ class VideoPipelineProcessor:
                 transform_coords=self.config.transform_coords,
             )
 
+            # 语义融合（如果启用）
+            if self.config.enable_semantic and self._detector is not None:
+                self._apply_semantic_fusion(
+                    frame_path,
+                    voxel_path,
+                    detections_dir or voxel_output_dir,
+                    navigation_dir=navigation_dir,
+                    focal_length=f_px,  # 传递 SHARP 的精确焦距
+                )
+
             return True
 
         except Exception as e:
@@ -287,6 +504,17 @@ class VideoPipelineProcessor:
 
         Returns:
             VideoProcessingStats: 处理统计
+
+        输出目录结构:
+            output_dir/
+            ├── extracted_frames/     # 提取的视频帧
+            ├── gaussians/            # SHARP 输出的 3D 高斯
+            ├── voxelized/            # 体素化后的点云（带语义标签）
+            │   ├── vox_frame_*.ply   # 体素化点云
+            │   ├── det_frame_*.png   # 检测结果可视化
+            │   └── vox_frame_*_obstacles.json  # 障碍物信息
+            └── navigation/           # 导航用点云（机器人坐标系）
+                └── nav_frame_*.ply
         """
         self.stats = VideoProcessingStats()
         self.stats.pipeline_start_time = time.time()
@@ -297,8 +525,23 @@ class VideoPipelineProcessor:
         frames_dir = output_dir / "extracted_frames"
         ply_dir = output_dir / "gaussians"
         voxel_dir = output_dir / "voxelized"
-        for d in [frames_dir, ply_dir, voxel_dir]:
+        detections_dir = output_dir / "detections"
+        navigation_dir = (
+            output_dir / "navigation" if self.config.output_navigation_ply else None
+        )
+
+        dirs_to_create = [frames_dir, ply_dir, voxel_dir, detections_dir]
+        if navigation_dir:
+            dirs_to_create.append(navigation_dir)
+        for d in dirs_to_create:
             d.mkdir(parents=True, exist_ok=True)
+
+        if self.config.verbose:
+            logger.info(f"Output directories created in: {output_dir}")
+            if self.config.enable_semantic:
+                logger.info("Semantic detection: ENABLED")
+            if navigation_dir:
+                logger.info("Navigation PLY output: ENABLED (robot coordinate system)")
 
         if not self._load_model():
             logger.error("Failed to load model")
@@ -307,6 +550,11 @@ class VideoPipelineProcessor:
             return self.stats
 
         self._load_voxelizer()
+
+        # 加载语义检测器（如果启用）
+        if self.config.enable_semantic:
+            self._load_detector()
+
         self._stop_event.clear()
         self._extraction_done.clear()
         self._frame_queue = queue.Queue(maxsize=self.config.frame_queue_size)
@@ -328,7 +576,13 @@ class VideoPipelineProcessor:
 
                 # 处理帧
                 process_start = time.time()
-                success = self._process_frame(frame_info, ply_dir, voxel_dir)
+                success = self._process_frame(
+                    frame_info,
+                    ply_dir,
+                    voxel_dir,
+                    detections_dir,
+                    navigation_dir,
+                )
                 process_time = time.time() - process_start
 
                 if success:
@@ -358,6 +612,7 @@ class VideoPipelineProcessor:
 
         if self.config.auto_unload:
             self._unload_model()
+            self._cleanup_detector()
 
         if self.config.verbose:
             logger.info("=" * 50)
@@ -368,6 +623,10 @@ class VideoPipelineProcessor:
                 f"  Avg time per frame: {self.stats.avg_processing_time_per_frame:.2f}s"
             )
             logger.info(f"  FPS: {self.stats.frames_per_second:.2f}")
+            if self.config.enable_semantic:
+                logger.info("  Semantic detection: ENABLED")
+            if navigation_dir:
+                logger.info(f"  Navigation PLY: {navigation_dir}")
             logger.info("=" * 50)
 
         return self.stats
@@ -376,6 +635,7 @@ class VideoPipelineProcessor:
         """清理资源。"""
         self._stop_event.set()
         self._unload_model()
+        self._cleanup_detector()
         self._voxelizer = None
 
 
@@ -387,6 +647,10 @@ def process_video(
     use_gpu: bool = True,
     verbose: bool = True,
     checkpoint_path: str | None = None,
+    enable_semantic: bool = True,
+    semantic_model: str = "yolo11n-seg.pt",
+    semantic_confidence: float = 0.5,
+    output_navigation_ply: bool = True,
 ) -> VideoProcessingStats:
     """便捷函数：处理视频。
 
@@ -398,15 +662,33 @@ def process_video(
         use_gpu: 是否使用GPU
         verbose: 详细输出
         checkpoint_path: 模型检查点路径
+        enable_semantic: 是否启用语义检测
+        semantic_model: YOLO 模型名称
+        semantic_confidence: 检测置信度阈值
+        output_navigation_ply: 是否输出导航用点云（机器人坐标系）
 
     Returns:
         VideoProcessingStats: 处理统计
+
+    Example:
+        >>> from aylm.tools.video_pipeline import process_video
+        >>> stats = process_video(
+        ...     video_path="video.mp4",
+        ...     output_dir="output/",
+        ...     enable_semantic=True,
+        ...     output_navigation_ply=True,
+        ... )
+        >>> print(f"Processed {stats.total_frames_processed} frames")
     """
     config = VideoPipelineConfig(
         voxel_size=voxel_size,
         use_gpu=use_gpu,
         verbose=verbose,
         checkpoint_path=Path(checkpoint_path) if checkpoint_path else None,
+        enable_semantic=enable_semantic,
+        semantic_model=semantic_model,
+        semantic_confidence=semantic_confidence,
+        output_navigation_ply=output_navigation_ply,
     )
 
     processor = VideoPipelineProcessor(config)

@@ -61,6 +61,9 @@ class VoxelizerConfig:
     ransac_num_iterations: int = 1000
     use_gpu: bool = True  # 是否使用GPU加速（如果可用）
     gpu_device: str = "auto"  # GPU设备：auto/cuda/mps/cpu
+    # 地面检测配置
+    ground_search_height: float = 1.0  # 从 Y 最大值向下搜索地面的高度范围（米）
+    ground_min_points: int = 100  # 地面区域最少点数，少于此值则跳过地面检测
 
 
 @dataclass
@@ -71,9 +74,17 @@ class PointCloud:
     colors: Optional[NDArray[np.float64]] = None
     normals: Optional[NDArray[np.float64]] = None
 
+    def filter_by_mask(self, mask: "NDArray[np.bool_]") -> "PointCloud":
+        """根据布尔掩码过滤点云。"""
+        colors = self.colors[mask] if self.colors is not None else None
+        return PointCloud(points=self.points[mask], colors=colors)
+
 
 class PointCloudVoxelizer:
     """点云体素化处理器。"""
+
+    # 类常量
+    _DEFAULT_GROUND_PLANE = np.array([0.0, 1.0, 0.0, 0.0])  # 默认水平面 (Y轴向下)
 
     def __init__(self, config: Optional[VoxelizerConfig] = None):
         self.config = config or VoxelizerConfig()
@@ -96,7 +107,15 @@ class PointCloudVoxelizer:
 
     def _should_use_gpu(self) -> bool:
         """检查是否应该使用GPU。"""
-        return HAS_GPU and self.config.use_gpu and self._device != "cpu"
+        return self._device != "cpu"
+
+    def _to_o3d(self, pc: PointCloud) -> "o3d.geometry.PointCloud":
+        """将 PointCloud 转换为 Open3D 格式。"""
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pc.points)
+        if pc.colors is not None:
+            pcd.colors = o3d.utility.Vector3dVector(pc.colors)
+        return pcd
 
     def load_ply(self, filepath: Path) -> PointCloud:
         """从PLY文件加载点云。"""
@@ -148,10 +167,7 @@ class PointCloudVoxelizer:
 
     def _remove_outliers_o3d(self, pc: PointCloud, cfg: VoxelizerConfig) -> PointCloud:
         """使用Open3D去除离群点。"""
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(pc.points)
-        if pc.colors is not None:
-            pcd.colors = o3d.utility.Vector3dVector(pc.colors)
+        pcd = self._to_o3d(pc)
 
         pcd_clean, indices = pcd.remove_statistical_outlier(
             nb_neighbors=cfg.statistical_nb_neighbors,
@@ -160,8 +176,7 @@ class PointCloudVoxelizer:
         indices = np.asarray(indices)
         logger.info(f"Removed {len(pc.points) - len(indices)} outliers")
 
-        colors = pc.colors[indices] if pc.colors is not None else None
-        return PointCloud(points=pc.points[indices], colors=colors)
+        return pc.filter_by_mask(np.isin(np.arange(len(pc.points)), indices))
 
     def _remove_outliers_numpy(
         self, pc: PointCloud, cfg: VoxelizerConfig
@@ -179,8 +194,7 @@ class PointCloudVoxelizer:
         mask = mean_distances < threshold
 
         logger.info(f"Removed {(~mask).sum()} outliers")
-        colors = pc.colors[mask] if pc.colors is not None else None
-        return PointCloud(points=pc.points[mask], colors=colors)
+        return pc.filter_by_mask(mask)
 
     def _remove_outliers_gpu(self, pc: PointCloud, cfg: VoxelizerConfig) -> PointCloud:
         """使用PyTorch GPU加速去除离群点。"""
@@ -233,8 +247,7 @@ class PointCloudVoxelizer:
             mask_np = mask.cpu().numpy()
             logger.info(f"Removed {(~mask_np).sum()} outliers (GPU)")
 
-            colors = pc.colors[mask_np] if pc.colors is not None else None
-            return PointCloud(points=pc.points[mask_np], colors=colors)
+            return pc.filter_by_mask(mask_np)
 
         except RuntimeError as e:
             # GPU内存不足，降级到CPU
@@ -249,44 +262,152 @@ class PointCloudVoxelizer:
             raise
 
     def detect_ground_ransac(
-        self, pc: PointCloud
+        self, pc: PointCloud, ground_normal_threshold: float = 0.8
     ) -> tuple[PointCloud, NDArray[np.float64]]:
-        """RANSAC地面检测，返回非地面点和地面平面参数。"""
+        """RANSAC地面检测，返回非地面点和地面平面参数。
+
+        改进策略：
+        1. 首先找到 Y 值最大的区域（OpenCV 坐标系中 Y 向下，Y 最大 = 最低点 = 地面）
+        2. 只在这个区域进行 RANSAC 平面拟合
+        3. 移除整个点云中距离地面平面较近的点
+
+        Args:
+            pc: 输入点云
+            ground_normal_threshold: 地面法向量与Y轴的最小点积阈值（0-1）
+                在OpenCV坐标系中，Y轴向下，地面法向量应接近[0, ±1, 0]
+                默认0.8表示法向量与Y轴夹角小于约37度
+
+        Returns:
+            非地面点云和平面参数 [a, b, c, d]，其中 ax + by + cz + d = 0
+        """
         logger.info("Detecting ground plane with RANSAC")
         cfg = self.config
 
+        # 步骤1：找到地面区域（Y 值最大的区域）
+        y_values = pc.points[:, 1]
+        y_max = y_values.max()
+        y_threshold = y_max - cfg.ground_search_height
+
+        ground_region_mask = y_values >= y_threshold
+        ground_region_count = ground_region_mask.sum()
+
+        logger.info(
+            f"Ground search region: Y >= {y_threshold:.2f}m, "
+            f"found {ground_region_count} points"
+        )
+
+        # 如果地面区域点数太少，跳过地面检测
+        if ground_region_count < cfg.ground_min_points:
+            logger.warning(
+                f"Ground region has only {ground_region_count} points "
+                f"(< {cfg.ground_min_points}), skipping ground detection"
+            )
+            default_plane = self._DEFAULT_GROUND_PLANE.copy()
+            default_plane[3] = -y_max
+            return pc, default_plane
+
+        # 步骤2：在地面区域进行 RANSAC
+        ground_region_pc = pc.filter_by_mask(ground_region_mask)
+
         if self._should_use_gpu():
-            return self._detect_ground_gpu(pc, cfg)
+            _, plane = self._detect_ground_gpu(
+                ground_region_pc, cfg, ground_normal_threshold
+            )
         elif HAS_OPEN3D:
-            return self._detect_ground_o3d(pc, cfg)
-        return self._detect_ground_numpy(pc, cfg)
+            _, plane = self._detect_ground_o3d(
+                ground_region_pc, cfg, ground_normal_threshold
+            )
+        else:
+            _, plane = self._detect_ground_numpy(
+                ground_region_pc, cfg, ground_normal_threshold
+            )
+
+        # 步骤3：使用检测到的平面移除整个点云中的地面点
+        a, b, c, d = plane
+        distances = np.abs(
+            a * pc.points[:, 0] + b * pc.points[:, 1] + c * pc.points[:, 2] + d
+        )
+        ground_mask = distances < cfg.ransac_distance_threshold
+
+        # 移除地面点
+        non_ground_mask = ~ground_mask
+        removed_count = ground_mask.sum()
+
+        logger.info(f"Removed {removed_count} ground points from entire point cloud")
+
+        return pc.filter_by_mask(non_ground_mask), plane
 
     def _detect_ground_o3d(
-        self, pc: PointCloud, cfg: VoxelizerConfig
+        self, pc: PointCloud, cfg: VoxelizerConfig, ground_normal_threshold: float
     ) -> tuple[PointCloud, NDArray[np.float64]]:
-        """使用Open3D进行RANSAC地面检测。"""
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(pc.points)
+        """使用Open3D进行RANSAC地面检测。
 
-        plane_model, inliers = pcd.segment_plane(
-            distance_threshold=cfg.ransac_distance_threshold,
-            ransac_n=cfg.ransac_n_points,
-            num_iterations=cfg.ransac_num_iterations,
-        )
+        添加法向量方向验证：只接受法向量与Y轴夹角小于阈值的平面。
+        """
+        pcd = self._to_o3d(pc)
+
+        # 多次尝试找到符合地面法向量方向的平面
+        remaining_pcd = pcd
+        remaining_indices = np.arange(len(pc.points))
+        best_plane = self._DEFAULT_GROUND_PLANE.copy()
+        best_inliers = np.array([], dtype=int)
+
+        for attempt in range(5):  # 最多尝试5次
+            if len(remaining_pcd.points) < cfg.ransac_n_points:
+                break
+
+            plane_model, inliers = remaining_pcd.segment_plane(
+                distance_threshold=cfg.ransac_distance_threshold,
+                ransac_n=cfg.ransac_n_points,
+                num_iterations=cfg.ransac_num_iterations,
+            )
+
+            # 检查法向量方向（OpenCV坐标系Y轴向下）
+            normal = np.array(plane_model[:3])
+            y_component = abs(normal[1])  # Y分量的绝对值
+
+            if y_component >= ground_normal_threshold:
+                # 找到地面平面
+                best_plane = np.array(plane_model)
+                best_inliers = remaining_indices[inliers]
+                logger.info(
+                    f"Ground plane found (attempt {attempt + 1}): "
+                    f"normal={normal}, Y-component={y_component:.3f}"
+                )
+                break
+            else:
+                # 不是地面，从剩余点中移除这个平面继续搜索
+                logger.debug(
+                    f"Plane rejected (attempt {attempt + 1}): "
+                    f"normal={normal}, Y-component={y_component:.3f} < {ground_normal_threshold}"
+                )
+                mask = np.ones(len(remaining_pcd.points), dtype=bool)
+                mask[inliers] = False
+                remaining_indices = remaining_indices[mask]
+                remaining_pcd = remaining_pcd.select_by_index(
+                    np.where(mask)[0].tolist()
+                )
+
+        # 移除地面点
         mask = np.ones(len(pc.points), dtype=bool)
-        mask[inliers] = False
+        if len(best_inliers) > 0:
+            mask[best_inliers] = False
+            logger.info(f"Detected ground with {len(best_inliers)} points")
+        else:
+            logger.warning("No valid ground plane found, keeping all points")
 
-        logger.info(f"Detected ground with {len(inliers)} points")
-        colors = pc.colors[mask] if pc.colors is not None else None
-        return PointCloud(points=pc.points[mask], colors=colors), np.array(plane_model)
+        return pc.filter_by_mask(mask), best_plane
 
     def _detect_ground_numpy(
-        self, pc: PointCloud, cfg: VoxelizerConfig
+        self, pc: PointCloud, cfg: VoxelizerConfig, ground_normal_threshold: float
     ) -> tuple[PointCloud, NDArray[np.float64]]:
-        """使用numpy实现RANSAC地面检测。"""
+        """使用numpy实现RANSAC地面检测。
+
+        添加法向量方向验证：只接受法向量与Y轴夹角小于阈值的平面。
+        """
         points = pc.points
         best_inliers = np.array([], dtype=int)
-        best_plane = np.zeros(4)
+        best_plane = self._DEFAULT_GROUND_PLANE.copy()
 
         for _ in range(cfg.ransac_num_iterations):
             idx = np.random.choice(len(points), cfg.ransac_n_points, replace=False)
@@ -300,6 +421,11 @@ class PointCloudVoxelizer:
             normal /= norm
             d = -np.dot(normal, p1)
 
+            # 检查法向量方向（OpenCV坐标系Y轴向下）
+            y_component = abs(normal[1])
+            if y_component < ground_normal_threshold:
+                continue  # 跳过非地面平面
+
             distances = np.abs(points @ normal + d)
             inliers = np.where(distances < cfg.ransac_distance_threshold)[0]
 
@@ -308,16 +434,21 @@ class PointCloudVoxelizer:
                 best_plane = np.append(normal, d)
 
         mask = np.ones(len(points), dtype=bool)
-        mask[best_inliers] = False
+        if len(best_inliers) > 0:
+            mask[best_inliers] = False
+            logger.info(f"Detected ground with {len(best_inliers)} points")
+        else:
+            logger.warning("No valid ground plane found, keeping all points")
 
-        logger.info(f"Detected ground with {len(best_inliers)} points")
-        colors = pc.colors[mask] if pc.colors is not None else None
-        return PointCloud(points=points[mask], colors=colors), best_plane
+        return pc.filter_by_mask(mask), best_plane
 
     def _detect_ground_gpu(
-        self, pc: PointCloud, cfg: VoxelizerConfig
+        self, pc: PointCloud, cfg: VoxelizerConfig, ground_normal_threshold: float
     ) -> tuple[PointCloud, NDArray[np.float64]]:
-        """使用PyTorch GPU加速进行RANSAC地面检测。"""
+        """使用PyTorch GPU加速进行RANSAC地面检测。
+
+        添加法向量方向验证：只接受法向量与Y轴夹角小于阈值的平面。
+        """
         logger.info(f"Using GPU ({self._device}) for ground detection")
         device = torch.device(self._device)
 
@@ -326,7 +457,9 @@ class PointCloudVoxelizer:
 
         best_inlier_count = 0
         best_inliers_mask = torch.zeros(n_points, dtype=torch.bool, device=device)
-        best_plane = torch.zeros(4, device=device)
+        best_plane = torch.tensor(
+            self._DEFAULT_GROUND_PLANE, dtype=torch.float32, device=device
+        )
 
         # 批量RANSAC迭代
         batch_iterations = min(100, cfg.ransac_num_iterations)
@@ -351,6 +484,15 @@ class PointCloudVoxelizer:
 
             # 过滤退化情况
             valid_mask = norms.squeeze() > 1e-10
+
+            # 添加法向量方向验证（OpenCV坐标系Y轴向下）
+            normals_normalized = normals / (norms + 1e-10)
+            y_components = torch.abs(normals_normalized[:, 1])
+            ground_mask = y_components >= ground_normal_threshold
+
+            # 组合有效性掩码
+            valid_mask = valid_mask & ground_mask
+
             if not valid_mask.any():
                 continue
 
@@ -363,12 +505,15 @@ class PointCloudVoxelizer:
                 torch.mm(points_tensor, normals.T) + d.T
             )  # (n_points, batch)
 
-            # 统计内点数
+            # 统计内点数（只考虑有效的地面平面）
             inliers_count = (distances < cfg.ransac_distance_threshold).sum(dim=0)
+            inliers_count = torch.where(
+                valid_mask, inliers_count, torch.zeros_like(inliers_count)
+            )
 
             # 找最佳平面
             best_idx = inliers_count.argmax()
-            if inliers_count[best_idx] > best_inlier_count and valid_mask[best_idx]:
+            if inliers_count[best_idx] > best_inlier_count:
                 best_inlier_count = inliers_count[best_idx].item()
                 best_inliers_mask = (
                     distances[:, best_idx] < cfg.ransac_distance_threshold
@@ -379,9 +524,12 @@ class PointCloudVoxelizer:
         mask_np = ~best_inliers_mask.cpu().numpy()
         plane_np = best_plane.cpu().numpy()
 
-        logger.info(f"Detected ground with {best_inlier_count} points (GPU)")
-        colors = pc.colors[mask_np] if pc.colors is not None else None
-        return PointCloud(points=pc.points[mask_np], colors=colors), plane_np
+        if best_inlier_count > 0:
+            logger.info(f"Detected ground with {best_inlier_count} points (GPU)")
+        else:
+            logger.warning("No valid ground plane found (GPU), keeping all points")
+
+        return pc.filter_by_mask(mask_np), plane_np
 
     def voxel_downsample(self, pc: PointCloud) -> PointCloud:
         """体素化下采样。"""
@@ -395,10 +543,7 @@ class PointCloudVoxelizer:
 
     def _voxel_downsample_o3d(self, pc: PointCloud) -> PointCloud:
         """使用Open3D进行体素下采样。"""
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(pc.points)
-        if pc.colors is not None:
-            pcd.colors = o3d.utility.Vector3dVector(pc.colors)
+        pcd = self._to_o3d(pc)
 
         pcd_down = pcd.voxel_down_sample(self.config.voxel_size)
         points = np.asarray(pcd_down.points)

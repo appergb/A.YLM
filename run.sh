@@ -51,10 +51,23 @@ ${YELLOW}参数:${NC}
   -q, --quiet       安静模式
   --check-only      仅检查环境
 
+${YELLOW}语义检测选项:${NC}
+  --semantic        启用语义检测
+  --no-semantic     禁用语义检测
+  --semantic-model  YOLO模型名称 (默认: yolo11n-seg.pt)
+  --semantic-confidence  检测置信度 (默认: 0.5)
+
+${YELLOW}点云切片选项:${NC}
+  --slice           启用点云切片 (默认)
+  --no-slice        禁用点云切片
+  --slice-radius    切片半径/米 (默认: 10.0)
+
 ${YELLOW}示例:${NC}
   ./run.sh --setup                    # 初始化
   ./run.sh -i ./images                # 处理图像
   ./run.sh --video -i video.mp4       # 处理视频
+  ./run.sh --semantic -i ./images     # 启用语义检测
+  ./run.sh --slice-radius 5.0         # 设置切片半径
 EOF
 }
 
@@ -130,11 +143,8 @@ run_auto() {
     echo -e "  图像: ${YELLOW}$image_count${NC} | 视频: ${YELLOW}$video_count${NC}\n"
 
     if [[ "$image_count" -gt 0 ]]; then
-        if [[ "$image_count" -eq 1 ]]; then
-            run_full "$@"
-        else
-            run_pipeline "$@"
-        fi
+        # 统一使用 pipeline 命令（支持语义检测和切片）
+        run_pipeline "$@"
     elif [[ "$video_count" -gt 0 ]]; then
         local first_video=$(eval "find inputs/videos -maxdepth 1 -type f \( $VIDEO_EXTS \) 2>/dev/null | head -1")
         [[ -n "$first_video" ]] && run_video_process -i "$first_video" -o "outputs/video_output" "$@"
@@ -148,6 +158,9 @@ run_auto() {
 main() {
     local action="auto" input_dir="inputs/input_images" output_dir="" config_file=""
     local extra_args=() check_only=false use_gpu=false frame_interval="" fps="10" loop=false
+    # 语义检测和切片参数（默认都启用）
+    local semantic=true semantic_model="yolo11n-seg.pt" semantic_confidence="0.5"
+    local slice=true slice_radius="10.0"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -163,6 +176,15 @@ main() {
             --fps) fps="$2"; shift 2 ;;
             --loop) loop=true; shift ;;
             --check-only) check_only=true; shift ;;
+            # 语义检测参数
+            --semantic) semantic=true; shift ;;
+            --no-semantic) semantic=false; shift ;;
+            --semantic-model) semantic_model="$2"; shift 2 ;;
+            --semantic-confidence) semantic_confidence="$2"; shift 2 ;;
+            # 切片参数
+            --slice) slice=true; shift ;;
+            --no-slice) slice=false; shift ;;
+            --slice-radius) slice_radius="$2"; shift 2 ;;
             *) extra_args+=("$1"); shift ;;
         esac
     done
@@ -176,12 +198,27 @@ main() {
         exit 0
     fi
 
+    # 构建语义检测和切片参数
+    local semantic_args=()
+    if [[ "$semantic" == true ]]; then
+        semantic_args+=("--semantic" "--semantic-model" "$semantic_model" "--semantic-confidence" "$semantic_confidence")
+    else
+        semantic_args+=("--no-semantic")
+    fi
+
+    local slice_args=()
+    if [[ "$slice" == true ]]; then
+        slice_args+=("--slice" "--slice-radius" "$slice_radius")
+    else
+        slice_args+=("--no-slice")
+    fi
+
     case "$action" in
         setup) log_step "下载模型..."; python3 -m aylm.cli setup --download ;;
         voxelize) run_voxelize "${extra_args[@]}" ;;
         predict) run_predict "${extra_args[@]}" ;;
         full) run_full "${extra_args[@]}" ;;
-        pipeline) run_pipeline "${extra_args[@]}" ;;
+        pipeline) run_pipeline "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" ;;
         video)
             local video_args=("${extra_args[@]}")
             [[ -n "$config_file" ]] && video_args+=("-c" "$config_file")
@@ -197,7 +234,7 @@ main() {
             local play_args=("-i" "$input_dir" "--fps" "$fps")
             [[ "$loop" == true ]] && play_args+=("--loop")
             run_video_play "${play_args[@]}" ;;
-        auto) run_auto "$input_dir" "${extra_args[@]}" ;;
+        auto) run_auto "$input_dir" "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" ;;
     esac
 
     log_info "完成"

@@ -1,9 +1,17 @@
-"""AYLM tools module."""
+"""A.YLM 工具模块。"""
 
 from .coordinate_utils import (
+    opencv_to_robot,
+    robot_to_opencv,
     transform_for_navigation,
-    transform_opencv_to_enu,
-    transform_opencv_to_robot,
+    transform_obstacle_center,
+)
+from .object_detector import DetectorConfig, ObjectDetector
+from .obstacle_marker import (
+    ObstacleBox3D,
+    ObstacleMarker,
+    ObstacleMarkerConfig,
+    extract_obstacles,
 )
 from .pipeline_processor import (
     PipelineConfig,
@@ -12,22 +20,63 @@ from .pipeline_processor import (
     run_pipeline,
     run_pipeline_async,
 )
-from .pointcloud_voxelizer import (
-    PointCloud,
-    PointCloudVoxelizer,
-    VoxelizerConfig,
+from .pointcloud_slicer import (
+    PointCloudSlicer,
+    SlicerConfig,
+    SliceResult,
+    slice_pointcloud,
+)
+from .pointcloud_voxelizer import PointCloud, PointCloudVoxelizer, VoxelizerConfig
+from .semantic_fusion import (
+    CameraIntrinsics,
+    FusionConfig,
+    SemanticFusion,
+)
+from .semantic_types import (
+    COCO_TO_SEMANTIC,
+    SEMANTIC_COLORS,
+    Detection2D,
+    SemanticLabel,
+    SemanticPointCloud,
 )
 
 __all__ = [
-    "transform_opencv_to_robot",
-    "transform_opencv_to_enu",
-    "transform_for_navigation",
+    # 点云处理
     "PointCloud",
     "PointCloudVoxelizer",
     "VoxelizerConfig",
+    # 切片
+    "PointCloudSlicer",
+    "SlicerConfig",
+    "SliceResult",
+    "slice_pointcloud",
+    # 语义类型
+    "SemanticLabel",
+    "Detection2D",
+    "SemanticPointCloud",
+    "COCO_TO_SEMANTIC",
+    "SEMANTIC_COLORS",
+    # 目标检测
+    "ObjectDetector",
+    "DetectorConfig",
+    # 语义融合
+    "SemanticFusion",
+    "FusionConfig",
+    "CameraIntrinsics",
+    # 障碍物标记
+    "ObstacleMarker",
+    "ObstacleMarkerConfig",
+    "ObstacleBox3D",
+    "extract_obstacles",
+    # 流水线
     "PipelineConfig",
     "PipelineProcessor",
     "PipelineStats",
     "run_pipeline",
     "run_pipeline_async",
+    # 坐标转换
+    "transform_for_navigation",
+    "opencv_to_robot",
+    "robot_to_opencv",
+    "transform_obstacle_center",
 ]

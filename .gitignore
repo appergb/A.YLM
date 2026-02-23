@@ -33,6 +33,10 @@ models/*.ckpt
 models/*.safetensors
 !models/.gitkeep
 
+# YOLO model files
+yolo*.pt
+yolo*.onnx
+
 # Output files
 outputs/
 

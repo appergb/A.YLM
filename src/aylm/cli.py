@@ -315,11 +315,17 @@ def cmd_video_process(args: argparse.Namespace) -> int:
             VideoPipelineProcessor,
         )
 
+        # 解析语义检测选项
+        enable_semantic = args.semantic and not getattr(args, "no_semantic", False)
+
         pipeline_config = VideoPipelineConfig(
             video_config=config,
             use_gpu=args.use_gpu,
             verbose=args.verbose,
             checkpoint_path=model_path,
+            enable_semantic=enable_semantic,
+            semantic_model=args.semantic_model,
+            semantic_confidence=args.semantic_confidence,
         )
         stats = VideoPipelineProcessor(pipeline_config).process(video_path, output_dir)
 
@@ -469,10 +475,21 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
         return 1
     print(f"[模型] {model_path.name}")
 
+    # 解析语义检测和切片选项
+    enable_semantic = args.semantic and not getattr(args, "no_semantic", False)
+    enable_slice = args.slice and not getattr(args, "no_slice", False)
+
     print("\n[配置]")
     print(f"  体素尺寸: {args.voxel_size}m")
     print(f"  移除地面: {'否' if args.keep_ground else '是'}")
     print(f"  坐标转换: {'是' if args.transform else '否'}")
+    print(f"  语义检测: {'是' if enable_semantic else '否'}")
+    if enable_semantic:
+        print(f"    模型: {args.semantic_model}")
+        print(f"    置信度: {args.semantic_confidence}")
+    print(f"  点云切片: {'是' if enable_slice else '否'}")
+    if enable_slice:
+        print(f"    半径: {args.slice_radius}m")
     print(f"  详细输出: {'是' if verbose else '否'}")
 
     print("\n[流水线策略]")
@@ -493,17 +510,22 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
             transform_coords=args.transform,
             checkpoint_path=model_path,
             verbose=verbose,
+            enable_semantic=enable_semantic,
+            semantic_model=args.semantic_model,
+            semantic_confidence=args.semantic_confidence,
+            enable_slice=enable_slice,
+            slice_radius=args.slice_radius,
         )
         stats = PipelineProcessor(config).process(input_dir, output_dir)
 
         print("\n" + "=" * 50)
         print("[完成] 流水线处理结束")
-        print(f"  成功: {stats.successful_images}/{stats.total_images}")
+        print(f"  成功: {stats.completed_images}/{stats.total_images}")
         if stats.failed_images > 0:
             print(f"  失败: {stats.failed_images}")
         print(f"  总耗时: {stats.total_time:.1f}s")
-        if stats.successful_images > 0:
-            print(f"  平均: {stats.total_time / stats.successful_images:.1f}s/张")
+        if stats.completed_images > 0:
+            print(f"  平均: {stats.total_time / stats.completed_images:.1f}s/张")
 
         return 0 if stats.failed_images == 0 else 1
 
@@ -557,6 +579,17 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("--voxel-size", type=float, default=0.005, help="体素尺寸(米)")
     p.add_argument("--keep-ground", action="store_true", help="保留地面点")
     p.add_argument("--transform", action="store_true", help="转换到机器人坐标系")
+    # 语义检测选项
+    p.add_argument(
+        "--semantic", action="store_true", default=True, help="启用语义检测（默认开启）"
+    )
+    p.add_argument("--no-semantic", action="store_true", help="禁用语义检测")
+    p.add_argument("--semantic-model", default="yolo11n-seg.pt", help="YOLO模型名称")
+    p.add_argument("--semantic-confidence", type=float, default=0.5, help="检测置信度")
+    # 切片选项
+    p.add_argument("--slice", action="store_true", default=True, help="启用点云切片")
+    p.add_argument("--no-slice", action="store_true", help="禁用点云切片")
+    p.add_argument("--slice-radius", type=float, default=10.0, help="切片半径(米)")
     p.add_argument(
         "-v",
         "--verbose",
@@ -581,6 +614,11 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("--frame-interval", type=float, help="帧间隔(秒)，覆盖配置文件设置")
     p.add_argument("--compression", type=float, default=1.0, help="压缩倍数(默认1.0)")
     p.add_argument("--use-gpu", action="store_true", help="启用GPU加速")
+    # 语义检测选项
+    p.add_argument("--semantic", action="store_true", default=True, help="启用语义检测")
+    p.add_argument("--no-semantic", action="store_true", help="禁用语义检测")
+    p.add_argument("--semantic-model", default="yolo11n-seg.pt", help="YOLO模型名称")
+    p.add_argument("--semantic-confidence", type=float, default=0.5, help="检测置信度")
     p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
     p.set_defaults(func=cmd_video_process)
 

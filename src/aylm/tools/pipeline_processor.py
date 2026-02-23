@@ -1,18 +1,6 @@
 """流水线处理器模块。
 
-实现多图像流水线处理：
-- 模型只加载一次到内存
-- 第N张照片进行SHARP推理时，第N-1张照片同时进行体素化
-- 支持N张和N+1的流水线作业模式
-- 处理完成后自动卸载模型释放内存
-- 支持异步处理模式
-
-流水线示意图:
-    时间 →
-    图片1: [====模型推理====][====体素化====]
-    图片2:                   [====模型推理====][====体素化====]
-    图片3:                                     [====模型推理====][====体素化====]
-    完成后: [====卸载模型====]
+实现多图像流水线处理，支持推理与体素化并行、语义检测融合。
 """
 
 from __future__ import annotations
@@ -25,11 +13,15 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from queue import Queue
 from typing import Callable
 
 import torch
 import torch.nn.functional as F
+
+# 模块级常量
+DEFAULT_VOXEL_SIZE = 0.05  # 5cm 体素
+DEFAULT_SLICE_RADIUS = 20.0  # 20m 切片半径
+DEFAULT_FOV_DEGREES = 60.0  # 相机视场角
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +51,13 @@ class ImageTask:
     voxel_start_time: float | None = None
     voxel_end_time: float | None = None
     error_message: str | None = None
+    # 语义检测相关字段
+    detections: list | None = None  # 检测结果
+    semantic_ply_path: Path | None = None  # 语义 PLY 路径
+    # 相机参数（用于语义融合）
+    focal_length: float | None = None  # 焦距（像素）
+    image_width: int | None = None  # 图像宽度
+    image_height: int | None = None  # 图像高度
 
 
 @dataclass
@@ -73,6 +72,16 @@ class PipelineConfig:
     checkpoint_path: Path | None = None
     auto_unload: bool = True
     async_mode: bool = False
+    # 切片配置
+    enable_slice: bool = True  # 是否启用切片
+    slice_radius: float = 20.0  # 切片半径（米）
+    # 语义检测配置
+    enable_semantic: bool = True  # 是否启用语义检测（默认开启）
+    semantic_model: str = "yolo11n-seg.pt"  # YOLO 模型
+    semantic_confidence: float = 0.5  # 检测置信度
+    colorize_semantic: bool = True  # 语义着色
+    # 导航输出配置
+    output_navigation_ply: bool = True  # 是否输出导航用点云（机器人坐标系）
 
 
 @dataclass
@@ -219,9 +228,8 @@ class PipelineProcessor:
         self._device: torch.device | None = None
         self._model_loaded = False
         self._voxelizer = None
+        self._detector = None  # YOLO 语义检测器
         self._tasks: list[ImageTask] = []
-        self._predict_queue: Queue = Queue()
-        self._voxel_queue: Queue = Queue()
         self._stop_event = threading.Event()
         self._predict_lock = threading.Lock()
         self._async_executor: ThreadPoolExecutor | None = None
@@ -240,6 +248,7 @@ class PipelineProcessor:
     def cleanup(self):
         self._unload_model()
         self._cleanup_voxelizer()
+        self._cleanup_detector()
         self._cleanup_async()
 
     def _unload_model(self):
@@ -280,6 +289,28 @@ class PipelineProcessor:
         if self._voxelizer is not None:
             del self._voxelizer
             self._voxelizer = None
+
+    def _load_detector(self):
+        """加载 YOLO 语义检测器。"""
+        from aylm.tools.object_detector import DetectorConfig, ObjectDetector
+
+        self.log.stage("加载 YOLO 语义检测器...")
+        detector_config = DetectorConfig(
+            model_name=self.config.semantic_model,
+            confidence_threshold=self.config.semantic_confidence,
+            device=self.config.device,
+        )
+        self._detector = ObjectDetector(detector_config)
+        self._detector.load()
+        self.log.ok(f"语义检测器已加载 (模型: {self.config.semantic_model})")
+
+    def _cleanup_detector(self):
+        """清理语义检测器。"""
+        if self._detector is not None:
+            self.log.info("卸载语义检测器...")
+            self._detector.unload()
+            del self._detector
+            self._detector = None
 
     def _cleanup_async(self):
         if self._async_executor is not None:
@@ -419,6 +450,10 @@ class PipelineProcessor:
             task.ply_output_path = output_path
             task.status = TaskStatus.PREDICTED
             task.predict_end_time = time.time()
+            # 保存相机参数供语义融合使用
+            task.focal_length = f_px
+            task.image_width = width
+            task.image_height = height
 
             predict_time = task.predict_end_time - task.predict_start_time
             self.log.ok(
@@ -438,25 +473,55 @@ class PipelineProcessor:
             logger.exception(f"推理异常详情 - {task.image_path.name}")
             return False
 
-    def _voxelize_single(self, task: ImageTask, output_dir: Path) -> bool:
-        """对单个PLY文件进行体素化。"""
+    def _voxelize_single(
+        self, task: ImageTask, output_dir: Path, navigation_dir: Path | None = None
+    ) -> bool:
+        """对单个PLY文件进行切片、体素化，可选语义融合。
+
+        处理流程：SHARP输出 → 切片 → 体素化 → 语义融合
+
+        Args:
+            task: 图像任务
+            output_dir: 体素化输出目录
+            navigation_dir: 导航用点云输出目录（机器人坐标系）
+        """
         if task.status != TaskStatus.PREDICTED or task.ply_output_path is None:
             return False
 
         task.status = TaskStatus.VOXELIZING
         task.voxel_start_time = time.time()
 
-        self.log.progress(f"[{task.index+1}] 开始体素化: {task.ply_output_path.name}")
+        self.log.progress(f"[{task.index+1}] 开始处理: {task.ply_output_path.name}")
 
         try:
-            output_path = output_dir / f"vox_{task.ply_output_path.name}"
+            # 确定输入文件（可能经过切片）
+            input_ply_path = task.ply_output_path
 
+            # 步骤1：切片（如果启用）
+            if self.config.enable_slice:
+                sliced_path = self._apply_slice(task)
+                if sliced_path is not None:
+                    input_ply_path = sliced_path
+
+            # 步骤2：体素化
+            output_path = output_dir / f"vox_{task.ply_output_path.name}"
             self._voxelizer.process(
-                task.ply_output_path,
+                input_ply_path,
                 output_path,
                 remove_ground=self.config.remove_ground,
                 transform_coords=self.config.transform_coords,
             )
+
+            # 清理临时切片文件
+            if self.config.enable_slice and input_ply_path != task.ply_output_path:
+                try:
+                    input_ply_path.unlink()
+                except Exception:
+                    pass
+
+            # 步骤3：语义融合（如果启用）
+            if self.config.enable_semantic and self._detector is not None:
+                self._apply_semantic_fusion(task, output_path, navigation_dir)
 
             task.voxel_output_path = output_path
             task.status = TaskStatus.COMPLETED
@@ -464,7 +529,7 @@ class PipelineProcessor:
 
             voxel_time = task.voxel_end_time - task.voxel_start_time
             self.log.ok(
-                f"[{task.index+1}] 体素化完成: {task.ply_output_path.name} ({voxel_time:.2f}s)"
+                f"[{task.index+1}] 处理完成: {task.ply_output_path.name} ({voxel_time:.2f}s)"
             )
             self.log.info(f"    输出: {output_path.name}")
 
@@ -474,11 +539,262 @@ class PipelineProcessor:
             task.status = TaskStatus.FAILED
             task.error_message = str(e)
             task.voxel_end_time = time.time()
-            self.log.error(f"[{task.index+1}] 体素化失败: {task.ply_output_path.name}")
+            self.log.error(f"[{task.index+1}] 处理失败: {task.ply_output_path.name}")
             self.log.error(f"    错误类型: {type(e).__name__}")
             self.log.error(f"    错误信息: {e}")
-            logger.exception(f"体素化异常详情 - {task.ply_output_path.name}")
+            logger.exception(f"处理异常详情 - {task.ply_output_path.name}")
             return False
+
+    def _apply_slice(self, task: ImageTask) -> Path | None:
+        """对点云执行半径切片，只保留摄像机附近的点。
+
+        Args:
+            task: 图像任务
+
+        Returns:
+            切片后的临时 PLY 文件路径，失败返回 None
+        """
+        import numpy as np
+
+        try:
+            from plyfile import PlyData, PlyElement
+        except ImportError:
+            self.log.warn("    plyfile 未安装，跳过切片")
+            return None
+
+        self.log.info(f"    执行切片 (半径: {self.config.slice_radius}m)")
+
+        try:
+            # 读取点云
+            ply_data = PlyData.read(str(task.ply_output_path))
+            vertex = ply_data["vertex"]
+
+            # 获取坐标
+            x = np.array(vertex["x"], dtype=np.float64)
+            z = np.array(vertex["z"], dtype=np.float64)
+
+            # 计算水平距离（X-Z平面，以原点为圆心）
+            # OpenCV 坐标系: X右, Y下, Z前
+            # 水平面是 X-Z 平面
+            distance_xz = np.sqrt(x**2 + z**2)
+
+            # 筛选在半径内的点
+            mask = distance_xz <= self.config.slice_radius
+            n_original = len(x)
+            n_kept = mask.sum()
+
+            self.log.info(
+                f"    切片结果: {n_kept}/{n_original} 点 "
+                f"({n_kept / n_original * 100:.1f}%)"
+            )
+
+            if n_kept == 0:
+                self.log.warn("    切片后无点，跳过")
+                return None
+
+            if n_kept == n_original:
+                self.log.info("    所有点都在半径内，跳过切片")
+                return None
+
+            # 构建新的顶点数据
+            new_vertex_data = vertex.data[mask]
+
+            # 保存到临时文件
+            sliced_path = (
+                task.ply_output_path.parent / f"sliced_{task.ply_output_path.name}"
+            )
+            new_vertex = PlyElement.describe(new_vertex_data, "vertex")
+            PlyData([new_vertex], text=False).write(str(sliced_path))
+
+            self.log.ok(f"    切片完成: {sliced_path.name}")
+            return sliced_path
+
+        except Exception as e:
+            self.log.warn(f"    切片失败: {e}")
+            logger.exception(f"切片异常 - {task.ply_output_path.name}")
+            return None
+
+    def _apply_semantic_fusion(
+        self, task: ImageTask, voxel_ply_path: Path, navigation_dir: Path | None = None
+    ) -> None:
+        """对体素化后的点云应用语义融合。
+
+        处理流程：
+        1. 语义融合 -> 保存 vox_xxx.ply (OpenCV 坐标系，用于可视化)
+        2. 坐标转换 -> 保存 nav_xxx.ply (机器人坐标系，用于导航)
+        3. 障碍物提取 -> 保存 xxx_obstacles.json (机器人坐标系)
+
+        Args:
+            task: 图像任务
+            voxel_ply_path: 体素化后的 PLY 文件路径
+            navigation_dir: 导航用点云输出目录（机器人坐标系）
+        """
+        import cv2
+
+        from aylm.tools.semantic_fusion import FusionConfig, SemanticFusion
+        from aylm.tools.semantic_types import CameraIntrinsics
+
+        self.log.info(f"    执行语义融合: {task.image_path.name}")
+
+        try:
+            # 读取原始图像
+            image = cv2.imread(str(task.image_path))
+            if image is None:
+                self.log.warn(f"    无法读取图像，跳过语义融合: {task.image_path}")
+                return
+
+            height, width = image.shape[:2]
+
+            # 执行目标检测
+            detections = self._detector.detect(image, return_masks=True)
+            self.log.info(f"    检测到 {len(detections)} 个目标")
+
+            # 保存检测结果可视化图片（放在 PLY 输出目录）
+            if detections:
+                detection_image_path = (
+                    voxel_ply_path.parent / f"det_{task.image_path.name}"
+                )
+                self._detector.save_detection_image(
+                    image, detections, detection_image_path, draw_masks=True
+                )
+                self.log.ok(f"    检测结果图片已保存: {detection_image_path.name}")
+
+            if not detections:
+                self.log.info("    无检测结果，跳过语义融合")
+                return
+
+            # 读取体素化后的点云
+            try:
+                from plyfile import PlyData
+            except ImportError:
+                self.log.warn("    plyfile 未安装，跳过语义融合")
+                return
+
+            ply_data = PlyData.read(str(voxel_ply_path))
+            vertex = ply_data["vertex"]
+
+            import numpy as np
+
+            points = np.column_stack([vertex["x"], vertex["y"], vertex["z"]]).astype(
+                np.float64
+            )
+            colors = None
+            if "red" in vertex.data.dtype.names:
+                colors = (
+                    np.column_stack(
+                        [vertex["red"], vertex["green"], vertex["blue"]]
+                    ).astype(np.float64)
+                    / 255.0
+                )
+
+            # 使用 SHARP 推理时保存的相机内参（精确焦距）
+            if task.focal_length is not None:
+                f_px = task.focal_length
+                self.log.info(f"    使用 SHARP 焦距: {f_px:.1f}px")
+            else:
+                # 回退：从图像重新读取焦距
+                from sharp.utils import io
+
+                _, _, f_px = io.load_rgb(task.image_path)
+                self.log.info(f"    从 EXIF 读取焦距: {f_px:.1f}px")
+
+            intrinsics = CameraIntrinsics(fx=f_px, fy=f_px, cx=width / 2, cy=height / 2)
+
+            # 执行语义融合
+            fusion_config = FusionConfig(
+                min_confidence=self.config.semantic_confidence,
+                colorize_semantic=self.config.colorize_semantic,
+            )
+            fusion = SemanticFusion(fusion_config)
+            semantic_pc = fusion.fuse(
+                points=points,
+                colors=colors,
+                detections=detections,
+                image_shape=(height, width),
+                intrinsics=intrinsics,
+            )
+
+            # 步骤1: 保存带语义标签的 PLY（OpenCV 坐标系，用于可视化）
+            fusion.save_semantic_ply(
+                semantic_pc,
+                voxel_ply_path,
+                include_semantic_colors=self.config.colorize_semantic,
+            )
+            self.log.ok(f"    语义融合完成 (OpenCV坐标系): {voxel_ply_path.name}")
+
+            # 步骤2: 保存导航用点云（机器人坐标系，体素化）
+            if navigation_dir is not None and self.config.output_navigation_ply:
+                nav_ply_path = navigation_dir / f"nav_{voxel_ply_path.stem[4:]}.ply"
+                fusion.save_navigation_ply(
+                    semantic_pc, nav_ply_path, voxel_size=DEFAULT_VOXEL_SIZE
+                )
+                self.log.ok(
+                    f"    导航点云已保存 (机器人坐标系, {DEFAULT_VOXEL_SIZE*100:.0f}cm体素): {nav_ply_path.name}"
+                )
+
+            # 步骤3: 提取障碍物并导出 JSON（机器人坐标系）
+            from aylm.tools.obstacle_marker import ObstacleMarker, ObstacleMarkerConfig
+
+            marker_intrinsics = CameraIntrinsics(
+                fx=f_px, fy=f_px, cx=width / 2, cy=height / 2
+            )
+            marker = ObstacleMarker(ObstacleMarkerConfig())
+            obstacles = marker.extract_obstacles_from_detections(
+                points=points,
+                detections=detections,
+                image_shape=(height, width),
+                intrinsics=marker_intrinsics,
+            )
+
+            if obstacles:
+                # 将障碍物坐标转换为机器人坐标系
+                obstacles_robot = self._transform_obstacles_to_robot(obstacles)
+                json_path = (
+                    voxel_ply_path.parent / f"{voxel_ply_path.stem}_obstacles.json"
+                )
+                marker.export_to_json(obstacles_robot, json_path)
+                self.log.ok(f"    障碍物信息已导出 (机器人坐标系): {json_path.name}")
+
+        except Exception as e:
+            self.log.warn(f"    语义融合失败: {e}")
+            logger.exception(f"语义融合异常 - {task.image_path.name}")
+
+    def _transform_obstacles_to_robot(self, obstacles: list) -> list:
+        """将障碍物边界框坐标从 OpenCV 坐标系转换到机器人坐标系。
+
+        Args:
+            obstacles: OpenCV 坐标系下的障碍物列表
+
+        Returns:
+            机器人坐标系下的障碍物列表
+        """
+        import numpy as np
+
+        from aylm.tools.coordinate_utils import transform_opencv_to_robot
+        from aylm.tools.obstacle_marker import ObstacleBox3D
+
+        transformed = []
+        for obs in obstacles:
+            # 转换中心点
+            center_opencv = np.array(obs.center)
+            center_robot = transform_opencv_to_robot(center_opencv)
+
+            # 转换尺寸（需要重新映射维度）
+            # OpenCV: (width_x, height_y, depth_z) -> Robot: (depth_z, width_x, height_y)
+            # 因为 Robot X = OpenCV Z, Robot Y = -OpenCV X, Robot Z = -OpenCV Y
+            dims_opencv = obs.dimensions
+            dims_robot = (dims_opencv[2], dims_opencv[0], dims_opencv[1])
+
+            transformed_obs = ObstacleBox3D(
+                center=tuple(center_robot),
+                dimensions=dims_robot,
+                label=obs.label,
+                confidence=obs.confidence,
+                point_indices=obs.point_indices,
+            )
+            transformed.append(transformed_obs)
+
+        return transformed
 
     def _collect_images(self, input_path: Path) -> list[Path]:
         extensions = {".jpg", ".jpeg", ".png", ".heic", ".webp", ".tiff", ".bmp"}
@@ -523,12 +839,23 @@ class PipelineProcessor:
         if voxel_output_dir is None:
             voxel_output_dir = output_dir / "voxelized"
 
+        # 创建导航输出目录（如果启用）
+        navigation_dir = (
+            output_dir / "navigation"
+            if self.config.output_navigation_ply and self.config.enable_semantic
+            else None
+        )
+
         # 创建输出目录
         try:
             output_dir.mkdir(parents=True, exist_ok=True)
             voxel_output_dir.mkdir(parents=True, exist_ok=True)
+            if navigation_dir is not None:
+                navigation_dir.mkdir(parents=True, exist_ok=True)
             self.log.info(f"PLY输出目录: {output_dir}")
             self.log.info(f"体素化输出目录: {voxel_output_dir}")
+            if navigation_dir is not None:
+                self.log.info(f"导航输出目录: {navigation_dir}")
         except PermissionError as e:
             self.log.error(f"无法创建输出目录: {e}")
             self.stats.pipeline_end_time = time.time()
@@ -562,12 +889,20 @@ class PipelineProcessor:
         # 加载体素化器
         self._load_voxelizer()
 
+        # 加载语义检测器（如果启用）
+        if self.config.enable_semantic:
+            self._load_detector()
+
         # 执行流水线
         self.log.section("阶段 3: 流水线处理")
         self.log.info("流水线模式: 推理(N) || 体素化(N-1)")
+        if self.config.enable_semantic:
+            self.log.info("语义检测: 已启用")
+        if navigation_dir is not None:
+            self.log.info("导航输出: 已启用 (机器人坐标系)")
         self.log.info("")
 
-        self._execute_pipeline(output_dir, voxel_output_dir)
+        self._execute_pipeline(output_dir, voxel_output_dir, navigation_dir)
 
         # 统计结果
         self.stats.pipeline_end_time = time.time()
@@ -596,6 +931,7 @@ class PipelineProcessor:
             self.log.section("阶段 4: 清理资源")
             self._unload_model()
             self._cleanup_voxelizer()
+            self._cleanup_detector()
 
         return self.stats
 
@@ -675,7 +1011,12 @@ class PipelineProcessor:
             return self._async_future.cancel()
         return False
 
-    def _execute_pipeline(self, output_dir: Path, voxel_output_dir: Path):
+    def _execute_pipeline(
+        self,
+        output_dir: Path,
+        voxel_output_dir: Path,
+        navigation_dir: Path | None = None,
+    ):
         """执行流水线处理逻辑。
 
         流水线策略:
@@ -690,6 +1031,11 @@ class PipelineProcessor:
             图片3:                            [====推理====]
             图片2:                            [====体素化====]
             ...
+
+        Args:
+            output_dir: PLY 输出目录
+            voxel_output_dir: 体素化输出目录
+            navigation_dir: 导航用点云输出目录（机器人坐标系）
         """
         total = len(self._tasks)
 
@@ -718,7 +1064,10 @@ class PipelineProcessor:
                         f"  启动并行体素化: [{prev_task_for_voxel.index+1}] {prev_task_for_voxel.image_path.name}"
                     )
                     voxel_future = voxel_executor.submit(
-                        self._voxelize_single, prev_task_for_voxel, voxel_output_dir
+                        self._voxelize_single,
+                        prev_task_for_voxel,
+                        voxel_output_dir,
+                        navigation_dir,
                     )
 
                 # 执行当前图片的推理（主线程）
@@ -742,7 +1091,9 @@ class PipelineProcessor:
             if prev_task_for_voxel is not None:
                 self.log.info(f"\n{'─' * 40}")
                 self.log.info("最终阶段: 体素化最后一张图片")
-                self._voxelize_single(prev_task_for_voxel, voxel_output_dir)
+                self._voxelize_single(
+                    prev_task_for_voxel, voxel_output_dir, navigation_dir
+                )
 
 
 def run_pipeline(
@@ -752,6 +1103,12 @@ def run_pipeline(
     checkpoint_path: str | None = None,
     verbose: bool = True,
     auto_unload: bool = True,
+    enable_slice: bool = True,
+    slice_radius: float = 10.0,
+    enable_semantic: bool = False,
+    semantic_model: str = "yolo11n-seg.pt",
+    semantic_confidence: float = 0.5,
+    colorize_semantic: bool = True,
 ) -> PipelineStats:
     """便捷函数：运行流水线处理。
 
@@ -762,6 +1119,12 @@ def run_pipeline(
         checkpoint_path: 模型检查点路径
         verbose: 是否详细输出
         auto_unload: 处理完成后自动卸载模型（默认True）
+        enable_slice: 是否启用切片（默认True）
+        slice_radius: 切片半径（米，默认10.0）
+        enable_semantic: 是否启用语义检测
+        semantic_model: YOLO 模型名称
+        semantic_confidence: 检测置信度阈值
+        colorize_semantic: 是否根据语义标签着色
 
     Returns:
         PipelineStats: 处理统计信息
@@ -772,7 +1135,8 @@ def run_pipeline(
         ...     input_path="inputs/input_images",
         ...     output_dir="outputs/output_gaussians",
         ...     voxel_size=0.005,
-        ...     verbose=True
+        ...     slice_radius=10.0,
+        ...     enable_semantic=True
         ... )
         >>> print(f"处理完成: {stats.completed_images}/{stats.total_images}")
     """
@@ -781,6 +1145,12 @@ def run_pipeline(
         checkpoint_path=Path(checkpoint_path) if checkpoint_path else None,
         verbose=verbose,
         auto_unload=auto_unload,
+        enable_slice=enable_slice,
+        slice_radius=slice_radius,
+        enable_semantic=enable_semantic,
+        semantic_model=semantic_model,
+        semantic_confidence=semantic_confidence,
+        colorize_semantic=colorize_semantic,
     )
 
     # 使用上下文管理器确保资源释放
@@ -795,6 +1165,12 @@ def run_pipeline_async(
     checkpoint_path: str | None = None,
     verbose: bool = True,
     callback: Callable[[PipelineStats], None] | None = None,
+    enable_slice: bool = True,
+    slice_radius: float = 10.0,
+    enable_semantic: bool = False,
+    semantic_model: str = "yolo11n-seg.pt",
+    semantic_confidence: float = 0.5,
+    colorize_semantic: bool = True,
 ) -> tuple[PipelineProcessor, Future]:
     """便捷函数：异步运行流水线处理。
 
@@ -805,6 +1181,12 @@ def run_pipeline_async(
         checkpoint_path: 模型检查点路径
         verbose: 是否详细输出
         callback: 处理完成后的回调函数
+        enable_slice: 是否启用切片（默认True）
+        slice_radius: 切片半径（米，默认10.0）
+        enable_semantic: 是否启用语义检测
+        semantic_model: YOLO 模型名称
+        semantic_confidence: 检测置信度阈值
+        colorize_semantic: 是否根据语义标签着色
 
     Returns:
         Tuple[PipelineProcessor, Future]: 处理器实例和Future对象
@@ -814,7 +1196,8 @@ def run_pipeline_async(
         >>> processor, future = run_pipeline_async(
         ...     input_path="inputs/input_images",
         ...     output_dir="outputs/output_gaussians",
-        ...     callback=lambda stats: print(f"完成: {stats.completed_images}张")
+        ...     slice_radius=10.0,
+        ...     enable_semantic=True
         ... )
         >>> # 做其他事情...
         >>> stats = future.result()  # 等待完成
@@ -825,6 +1208,12 @@ def run_pipeline_async(
         checkpoint_path=Path(checkpoint_path) if checkpoint_path else None,
         verbose=verbose,
         auto_unload=True,  # 异步模式下也自动卸载
+        enable_slice=enable_slice,
+        slice_radius=slice_radius,
+        enable_semantic=enable_semantic,
+        semantic_model=semantic_model,
+        semantic_confidence=semantic_confidence,
+        colorize_semantic=colorize_semantic,
     )
 
     processor = PipelineProcessor(config)

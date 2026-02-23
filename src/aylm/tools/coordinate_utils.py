@@ -24,6 +24,17 @@ _OPENCV_TO_ROBOT = np.array(
     dtype=np.float64,
 )
 
+# 机器人到OpenCV坐标系的旋转矩阵（逆变换）
+# Robot: X前, Y左, Z上 -> OpenCV: X右, Y下, Z前
+_ROBOT_TO_OPENCV = np.array(
+    [
+        [0, -1, 0],  # OpenCV X = -Robot Y
+        [0, 0, -1],  # OpenCV Y = -Robot Z
+        [1, 0, 0],  # OpenCV Z = Robot X
+    ],
+    dtype=np.float64,
+)
+
 # OpenCV到ENU坐标系的旋转矩阵
 # OpenCV: X右, Y下, Z前 -> ENU: X东, Y北, Z上
 _OPENCV_TO_ENU = np.array(
@@ -52,6 +63,57 @@ def transform_opencv_to_robot(
     """
     points = _validate_points(points)
     return _apply_transform(points, _OPENCV_TO_ROBOT)
+
+
+def opencv_to_robot(points: NDArray) -> NDArray[np.float64]:
+    """OpenCV坐标系转机器人坐标系（简化别名）。
+
+    OpenCV (X右,Y下,Z前) -> 机器人 (X前,Y左,Z上)
+
+    Args:
+        points: 形状为 (N, 3) 或 (3,) 的点坐标数组
+
+    Returns:
+        转换后的点坐标数组
+    """
+    return transform_opencv_to_robot(points)
+
+
+def robot_to_opencv(points: NDArray) -> NDArray[np.float64]:
+    """机器人坐标系转OpenCV坐标系（逆变换）。
+
+    机器人 (X前,Y左,Z上) -> OpenCV (X右,Y下,Z前)
+
+    Args:
+        points: 形状为 (N, 3) 或 (3,) 的点坐标数组
+
+    Returns:
+        转换后的点坐标数组
+
+    Raises:
+        ValueError: 输入数组形状不正确
+    """
+    points = _validate_points(points)
+    return _apply_transform(points, _ROBOT_TO_OPENCV)
+
+
+def transform_obstacle_center(
+    center: NDArray | tuple[float, float, float],
+    to_robot: bool = True,
+) -> NDArray[np.float64]:
+    """转换障碍物中心点坐标。
+
+    Args:
+        center: 障碍物中心点坐标 (x, y, z)
+        to_robot: True 表示 OpenCV->Robot，False 表示 Robot->OpenCV
+
+    Returns:
+        转换后的中心点坐标
+    """
+    center_arr = np.asarray(center, dtype=np.float64)
+    if to_robot:
+        return opencv_to_robot(center_arr)
+    return robot_to_opencv(center_arr)
 
 
 def transform_opencv_to_enu(
