@@ -63,7 +63,7 @@ ${YELLOW}点云切片选项:${NC}
   --slice-radius    切片半径/米 (默认: 10.0)
 
 ${YELLOW}性能选项:${NC}
-  --resolution      内部处理分辨率 (默认: 1024，原始1536，越低越快)
+  --resolution      内部处理分辨率 (默认1152，必须是384的倍数：768/1152/1536)
 
 ${YELLOW}示例:${NC}
   ./run.sh --setup                    # 初始化
@@ -164,8 +164,8 @@ main() {
     # 语义检测和切片参数（默认都启用）
     local semantic=true semantic_model="yolo11n-seg.pt" semantic_confidence="0.25"
     local slice=true slice_radius="10.0"
-    # 分辨率参数（默认1024，原始1536）
-    local resolution="1024"
+    # 分辨率参数（默认1152，必须是384的倍数）
+    local resolution="1152"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in

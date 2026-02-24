@@ -79,7 +79,8 @@ class PipelineConfig:
     # 语义检测配置
     enable_semantic: bool = True  # 是否启用语义检测（默认开启）
     # 输入分辨率配置（降低可加速处理，但会损失精度）
-    internal_resolution: int = 1024  # 内部处理分辨率（默认1024，原始为1536）
+    # 注意：必须是 384 的倍数（ViT 要求），有效值：768, 1152, 1536
+    internal_resolution: int = 1152  # 内部处理分辨率（默认1152，原始为1536）
     semantic_model: str = "yolo11n-seg.pt"  # YOLO 模型
     semantic_confidence: float = 0.25  # 检测置信度
     colorize_semantic: bool = True  # 语义着色

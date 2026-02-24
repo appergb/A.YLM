@@ -57,7 +57,8 @@ class VideoPipelineConfig:
     # 导航输出配置
     output_navigation_ply: bool = True  # 是否输出导航用点云（机器人坐标系）
     # 输入分辨率配置（降低可加速处理，但会损失精度）
-    internal_resolution: int = 1024  # 内部处理分辨率（默认1024，原始为1536）
+    # 注意：必须是 384 的倍数（ViT 要求），有效值：768, 1152, 1536
+    internal_resolution: int = 1152  # 内部处理分辨率（默认1152，原始为1536）
 
 
 class VideoPipelineProcessor:

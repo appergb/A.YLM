@@ -625,8 +625,8 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--resolution",
         type=int,
-        default=1024,
-        help="内部处理分辨率(默认1024，原始1536，越低越快但精度降低)",
+        default=1152,
+        help="内部处理分辨率(默认1152，必须是384的倍数：768/1152/1536)",
     )
     p.add_argument(
         "-v",
@@ -665,8 +665,8 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--resolution",
         type=int,
-        default=1024,
-        help="内部处理分辨率(默认1024，原始1536，越低越快但精度降低)",
+        default=1152,
+        help="内部处理分辨率(默认1152，必须是384的倍数：768/1152/1536)",
     )
     p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
     p.set_defaults(func=cmd_video_process)
