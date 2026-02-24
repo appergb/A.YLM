@@ -116,11 +116,11 @@ class CameraIntrinsics:
     cy: float  # 主点 y 坐标（像素）
 
     @classmethod
-    def from_matrix(cls, K: NDArray[np.float64]) -> "CameraIntrinsics":
+    def from_matrix(cls, k: NDArray[np.float64]) -> "CameraIntrinsics":
         """从 3x3 内参矩阵创建。
 
         Args:
-            K: 3x3 相机内参矩阵
+            k: 3x3 相机内参矩阵
                [[fx,  0, cx],
                 [ 0, fy, cy],
                 [ 0,  0,  1]]
@@ -128,7 +128,7 @@ class CameraIntrinsics:
         Returns:
             CameraIntrinsics 实例
         """
-        return cls(fx=K[0, 0], fy=K[1, 1], cx=K[0, 2], cy=K[1, 2])
+        return cls(fx=k[0, 0], fy=k[1, 1], cx=k[0, 2], cy=k[1, 2])
 
     @classmethod
     def from_focal_length(

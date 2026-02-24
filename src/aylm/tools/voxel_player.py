@@ -15,12 +15,9 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import Any, Callable
 
 import numpy as np
-
-if TYPE_CHECKING:
-    import open3d as o3d
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +34,7 @@ except ImportError:
 # 尝试导入matplotlib作为fallback
 try:
     import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 - required for 3d projection
 
     HAS_MATPLOTLIB = True
 except ImportError:
@@ -304,7 +301,7 @@ class VoxelPlayer:
                 time.sleep(sleep_time)
 
     # 键盘回调
-    def _on_space(self, vis):
+    def _on_space(self, _vis):
         """空格键：播放/暂停。"""
         if self._state == PlaybackState.PLAYING:
             self._state = PlaybackState.PAUSED
@@ -316,50 +313,50 @@ class VoxelPlayer:
             logger.info("Playing")
         return False
 
-    def _on_right(self, vis):
+    def _on_right(self, _vis):
         """右箭头：下一帧。"""
         if self._current_index < len(self._ply_files) - 1:
             self._update_frame(self._current_index + 1)
         return False
 
-    def _on_left(self, vis):
+    def _on_left(self, _vis):
         """左箭头：上一帧。"""
         if self._current_index > 0:
             self._update_frame(self._current_index - 1)
         return False
 
-    def _on_up(self, vis):
+    def _on_up(self, _vis):
         """上箭头：加速。"""
         self._fps = min(60.0, self._fps * 1.25)
         logger.info(f"FPS: {self._fps:.1f}")
         return False
 
-    def _on_down(self, vis):
+    def _on_down(self, _vis):
         """下箭头：减速。"""
         self._fps = max(1.0, self._fps / 1.25)
         logger.info(f"FPS: {self._fps:.1f}")
         return False
 
-    def _on_reset(self, vis):
+    def _on_reset(self, _vis):
         """R键：重置到开头。"""
         self._update_frame(0)
         self._start_time = None
         logger.info("Reset to beginning")
         return False
 
-    def _on_loop_toggle(self, vis):
+    def _on_loop_toggle(self, _vis):
         """L键：切换循环模式。"""
         self._loop = not self._loop
         logger.info(f"Loop: {'ON' if self._loop else 'OFF'}")
         return False
 
-    def _on_center(self, vis):
+    def _on_center(self, _vis):
         """C键：重置视角。"""
         if self._vis is not None:
             self._vis.reset_view_point(True)
         return False
 
-    def _on_quit(self, vis):
+    def _on_quit(self, _vis):
         """Q键/Esc：退出。"""
         self._stop_event.set()
         self._state = PlaybackState.STOPPED
@@ -501,7 +498,7 @@ class VoxelPlayer:
         writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
 
         try:
-            for i, ply_path in enumerate(self._ply_files):
+            for i, _ply_path in enumerate(self._ply_files):
                 # 使用matplotlib渲染帧
                 pcd = self._load_frame(i)
                 if pcd is None:

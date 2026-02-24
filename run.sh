@@ -159,7 +159,7 @@ main() {
     local action="auto" input_dir="inputs/input_images" output_dir="" config_file=""
     local extra_args=() check_only=false use_gpu=false frame_interval="" fps="10" loop=false
     # 语义检测和切片参数（默认都启用）
-    local semantic=true semantic_model="yolo11n-seg.pt" semantic_confidence="0.5"
+    local semantic=true semantic_model="yolo11n-seg.pt" semantic_confidence="0.25"
     local slice=true slice_radius="10.0"
 
     while [[ $# -gt 0 ]]; do

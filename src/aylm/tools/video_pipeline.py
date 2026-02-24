@@ -3,6 +3,7 @@
 实现帧提取与处理的并行流水线：帧提取、SHARP推理、体素化、语义融合。
 """
 
+import contextlib
 import gc
 import logging
 import queue
@@ -50,6 +51,9 @@ class VideoPipelineConfig:
     semantic_model: str = "yolo11n-seg.pt"  # YOLO 模型
     semantic_confidence: float = 0.5  # 检测置信度阈值
     colorize_semantic: bool = True  # 是否根据语义标签着色
+    # 点云切片配置
+    enable_slice: bool = True  # 是否启用点云切片
+    slice_radius: float = 10.0  # 切片半径（米）
     # 导航输出配置
     output_navigation_ply: bool = True  # 是否输出导航用点云（机器人坐标系）
 
@@ -136,10 +140,8 @@ class VideoPipelineProcessor:
         logger.info("Unloading model...")
         if self._predictor is not None:
             if self._device and self._device.type != "cpu":
-                try:
+                with contextlib.suppress(Exception):
                     self._predictor.cpu()
-                except Exception:
-                    pass
             del self._predictor
             self._predictor = None
         self._device = None
@@ -180,6 +182,66 @@ class VideoPipelineProcessor:
             del self._detector
             self._detector = None
 
+    def _apply_slice(self, ply_path: Path, frame_stem: str) -> Path | None:
+        """对点云执行半径切片，只保留摄像机附近的点。
+
+        Args:
+            ply_path: 原始 PLY 文件路径
+            frame_stem: 帧文件名（不含扩展名）
+
+        Returns:
+            切片后的临时 PLY 文件路径，失败返回 None
+        """
+        import numpy as np
+
+        try:
+            from plyfile import PlyData, PlyElement
+        except ImportError:
+            logger.warning("plyfile not installed, skipping slice")
+            return None
+
+        logger.info(f"Applying slice (radius: {self.config.slice_radius}m)")
+
+        try:
+            # 读取点云
+            ply_data = PlyData.read(str(ply_path))
+            vertex = ply_data["vertex"]
+
+            # 获取坐标
+            x = np.array(vertex["x"], dtype=np.float64)
+            z = np.array(vertex["z"], dtype=np.float64)
+
+            # 计算水平距离（X-Z平面，以原点为圆心）
+            horizontal_dist = np.sqrt(x**2 + z**2)
+
+            # 筛选在半径内的点
+            mask = horizontal_dist <= self.config.slice_radius
+            kept_count = mask.sum()
+            total_count = len(mask)
+
+            if kept_count == 0:
+                logger.warning("No points within slice radius, skipping slice")
+                return None
+
+            logger.info(
+                f"  Slice: {kept_count}/{total_count} points "
+                f"({100*kept_count/total_count:.1f}%)"
+            )
+
+            # 创建新的顶点数据
+            new_vertex_data = vertex.data[mask]
+            new_vertex = PlyElement.describe(new_vertex_data, "vertex")
+
+            # 保存到临时文件
+            sliced_path = ply_path.parent / f"sliced_{frame_stem}.ply"
+            PlyData([new_vertex], text=False).write(str(sliced_path))
+
+            return sliced_path
+
+        except Exception as e:
+            logger.warning(f"Failed to apply slice: {e}")
+            return None
+
     def _apply_semantic_fusion(
         self,
         frame_path: Path,
@@ -218,7 +280,12 @@ class VideoPipelineProcessor:
 
             # 执行目标检测
             detections = self._detector.detect(image, return_masks=True)
-            logger.debug(f"Detected {len(detections)} objects")
+            logger.info(f"Detected {len(detections)} objects in {frame_path.name}")
+            for det in detections:
+                logger.debug(
+                    f"  - {det.semantic_label.name} (class_id={det.class_id}, "
+                    f"conf={det.confidence:.2f})"
+                )
 
             # 保存检测结果可视化图片
             if detections:
@@ -365,7 +432,7 @@ class VideoPipelineProcessor:
             )
 
             # 逐帧提取并放入队列
-            for frame_index, timestamp in frame_indices:
+            for frame_index, _timestamp in frame_indices:
                 if self._stop_event.is_set():
                     break
                 output_format = video_config.output_format.lower()
@@ -402,9 +469,9 @@ class VideoPipelineProcessor:
         Returns:
             是否处理成功
         """
-        import torch.nn.functional as F
         from sharp.utils import io
         from sharp.utils.gaussians import save_ply, unproject_gaussians
+        from torch.nn import functional as functional_nn
 
         frame_path = frame_info.output_path
         if frame_path is None or not frame_path.exists():
@@ -423,7 +490,7 @@ class VideoPipelineProcessor:
             )
             disparity_factor = torch.tensor([f_px / width]).float().to(self._device)
 
-            image_resized_pt = F.interpolate(
+            image_resized_pt = functional_nn.interpolate(
                 image_pt[None],
                 size=(internal_shape[1], internal_shape[0]),
                 mode="bilinear",
@@ -462,14 +529,26 @@ class VideoPipelineProcessor:
             ply_path = ply_output_dir / f"{frame_path.stem}.ply"
             save_ply(gaussians, f_px, (height, width), ply_path)
 
+            # 切片（如果启用）
+            input_ply_path = ply_path
+            if self.config.enable_slice:
+                sliced_path = self._apply_slice(ply_path, frame_path.stem)
+                if sliced_path is not None:
+                    input_ply_path = sliced_path
+
             # 体素化
             voxel_path = voxel_output_dir / f"vox_{frame_path.stem}.ply"
             self._voxelizer.process(
-                ply_path,
+                input_ply_path,
                 voxel_path,
                 remove_ground=self.config.remove_ground,
                 transform_coords=self.config.transform_coords,
             )
+
+            # 清理临时切片文件
+            if self.config.enable_slice and input_ply_path != ply_path:
+                with contextlib.suppress(Exception):
+                    input_ply_path.unlink()
 
             # 语义融合（如果启用）
             if self.config.enable_semantic and self._detector is not None:

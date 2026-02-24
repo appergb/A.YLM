@@ -100,9 +100,12 @@ class PointCloudVoxelizer:
             return GPU_DEVICE
         elif device_config == "cuda" and torch.cuda.is_available():
             return "cuda"
-        elif device_config == "mps" and hasattr(torch.backends, "mps"):
-            if torch.backends.mps.is_available():
-                return "mps"
+        elif (
+            device_config == "mps"
+            and hasattr(torch.backends, "mps")
+            and torch.backends.mps.is_available()
+        ):
+            return "mps"
         return "cpu"
 
     def _should_use_gpu(self) -> bool:

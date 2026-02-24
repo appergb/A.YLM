@@ -22,7 +22,7 @@ class DetectorConfig:
     """检测器配置参数。"""
 
     model_name: str = "yolo11n-seg.pt"  # YOLO11 模型名称
-    confidence_threshold: float = 0.5  # 置信度阈值
+    confidence_threshold: float = 0.25  # 置信度阈值（降低以检测更多目标）
     iou_threshold: float = 0.45  # NMS IoU 阈值
     device: str = "auto"  # 设备：auto/cuda/mps/cpu
     half_precision: bool = True  # 是否使用半精度（FP16）
@@ -263,7 +263,7 @@ class ObjectDetector:
         self.load()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, _exc_type, _exc_val, _exc_tb) -> None:
         """上下文管理器出口，自动卸载模型。"""
         self.unload()
 

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import logging
 import threading
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import Callable
 
 import torch
-import torch.nn.functional as F
+from torch.nn import functional as functional_nn
 
 # 模块级常量
 DEFAULT_VOXEL_SIZE = 0.05  # 5cm 体素
@@ -238,7 +239,7 @@ class PipelineProcessor:
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, _exc_type, _exc_val, _exc_tb):
         self.cleanup()
         return False
 
@@ -260,10 +261,8 @@ class PipelineProcessor:
         try:
             if self._predictor is not None:
                 if self._device and self._device.type != "cpu":
-                    try:
+                    with contextlib.suppress(Exception):
                         self._predictor.cpu()
-                    except Exception:
-                        pass
                 del self._predictor
                 self._predictor = None
 
@@ -276,10 +275,8 @@ class PipelineProcessor:
                 torch.cuda.synchronize()
 
             if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
-                try:
+                with contextlib.suppress(Exception):
                     torch.mps.empty_cache()
-                except Exception:
-                    pass
 
             self.log.ok("模型已卸载，内存已释放")
         except Exception as e:
@@ -407,7 +404,7 @@ class PipelineProcessor:
             )
             disparity_factor = torch.tensor([f_px / width]).float().to(self._device)
 
-            image_resized_pt = F.interpolate(
+            image_resized_pt = functional_nn.interpolate(
                 image_pt[None],
                 size=(internal_shape[1], internal_shape[0]),
                 mode="bilinear",
@@ -514,10 +511,8 @@ class PipelineProcessor:
 
             # 清理临时切片文件
             if self.config.enable_slice and input_ply_path != task.ply_output_path:
-                try:
+                with contextlib.suppress(Exception):
                     input_ply_path.unlink()
-                except Exception:
-                    pass
 
             # 步骤3：语义融合（如果启用）
             if self.config.enable_semantic and self._detector is not None:
@@ -1082,10 +1077,7 @@ class PipelineProcessor:
                     voxel_future = None
 
                 # 记录当前任务用于下一轮的体素化
-                if predict_success:
-                    prev_task_for_voxel = task
-                else:
-                    prev_task_for_voxel = None
+                prev_task_for_voxel = task if predict_success else None
 
             # 处理最后一张图片的体素化（同步执行，无并行）
             if prev_task_for_voxel is not None:

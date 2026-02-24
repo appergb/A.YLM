@@ -283,7 +283,18 @@ def cmd_video_process(args: argparse.Namespace) -> int:
         from aylm.tools.video_config import load_or_create_config
         from aylm.tools.video_types import FrameExtractionMethod, GPUAcceleration
 
-        config = load_or_create_config(Path(args.config) if args.config else None)
+        # 确定配置文件路径：优先使用命令行指定，否则查找视频目录下的配置
+        config_path = None
+        if args.config:
+            config_path = Path(args.config)
+        else:
+            # 自动查找视频所在目录的配置文件
+            video_dir_config = video_path.parent / "video_config.yaml"
+            if video_dir_config.exists():
+                config_path = video_dir_config
+                print(f"    发现配置文件: {config_path}")
+
+        config = load_or_create_config(config_path)
         if args.frame_interval:
             config.frame_interval = args.frame_interval
             config.frame_extraction_method = FrameExtractionMethod.INTERVAL
@@ -317,6 +328,10 @@ def cmd_video_process(args: argparse.Namespace) -> int:
 
         # 解析语义检测选项
         enable_semantic = args.semantic and not getattr(args, "no_semantic", False)
+        # 解析切片选项
+        enable_slice = getattr(args, "slice", True) and not getattr(
+            args, "no_slice", False
+        )
 
         pipeline_config = VideoPipelineConfig(
             video_config=config,
@@ -326,6 +341,8 @@ def cmd_video_process(args: argparse.Namespace) -> int:
             enable_semantic=enable_semantic,
             semantic_model=args.semantic_model,
             semantic_confidence=args.semantic_confidence,
+            enable_slice=enable_slice,
+            slice_radius=getattr(args, "slice_radius", 10.0),
         )
         stats = VideoPipelineProcessor(pipeline_config).process(video_path, output_dir)
 
@@ -370,7 +387,18 @@ def cmd_video_extract(args: argparse.Namespace) -> int:
         from aylm.tools.video_config import load_or_create_config
         from aylm.tools.video_types import FrameExtractionMethod
 
-        config = load_or_create_config(Path(args.config) if args.config else None)
+        # 确定配置文件路径：优先使用命令行指定，否则查找视频目录下的配置
+        config_path = None
+        if args.config:
+            config_path = Path(args.config)
+        else:
+            # 自动查找视频所在目录的配置文件
+            video_dir_config = video_path.parent / "video_config.yaml"
+            if video_dir_config.exists():
+                config_path = video_dir_config
+                print(f"    发现配置文件: {config_path}")
+
+        config = load_or_create_config(config_path)
         if args.frame_interval:
             config.frame_interval = args.frame_interval
             config.frame_extraction_method = FrameExtractionMethod.INTERVAL
@@ -585,7 +613,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--no-semantic", action="store_true", help="禁用语义检测")
     p.add_argument("--semantic-model", default="yolo11n-seg.pt", help="YOLO模型名称")
-    p.add_argument("--semantic-confidence", type=float, default=0.5, help="检测置信度")
+    p.add_argument("--semantic-confidence", type=float, default=0.25, help="检测置信度")
     # 切片选项
     p.add_argument("--slice", action="store_true", default=True, help="启用点云切片")
     p.add_argument("--no-slice", action="store_true", help="禁用点云切片")
@@ -618,7 +646,11 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("--semantic", action="store_true", default=True, help="启用语义检测")
     p.add_argument("--no-semantic", action="store_true", help="禁用语义检测")
     p.add_argument("--semantic-model", default="yolo11n-seg.pt", help="YOLO模型名称")
-    p.add_argument("--semantic-confidence", type=float, default=0.5, help="检测置信度")
+    p.add_argument("--semantic-confidence", type=float, default=0.25, help="检测置信度")
+    # 点云切片选项
+    p.add_argument("--slice", action="store_true", default=True, help="启用点云切片")
+    p.add_argument("--no-slice", action="store_true", help="禁用点云切片")
+    p.add_argument("--slice-radius", type=float, default=10.0, help="切片半径(米)")
     p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
     p.set_defaults(func=cmd_video_process)
 
