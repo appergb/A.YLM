@@ -78,6 +78,8 @@ class PipelineConfig:
     slice_radius: float = 20.0  # 切片半径（米）
     # 语义检测配置
     enable_semantic: bool = True  # 是否启用语义检测（默认开启）
+    # 输入分辨率配置（降低可加速处理，但会损失精度）
+    internal_resolution: int = 1024  # 内部处理分辨率（默认1024，原始为1536）
     semantic_model: str = "yolo11n-seg.pt"  # YOLO 模型
     semantic_confidence: float = 0.5  # 检测置信度
     colorize_semantic: bool = True  # 语义着色
@@ -396,8 +398,10 @@ class PipelineProcessor:
 
             self.log.info(f"    图像尺寸: {width}x{height}, 焦距: {f_px:.1f}px")
 
-            # 预处理
-            internal_shape = (1536, 1536)
+            # 预处理（使用配置的内部分辨率）
+            res = self.config.internal_resolution
+            internal_shape = (res, res)
+            self.log.info(f"    内部处理分辨率: {res}x{res}")
             image_pt = (
                 torch.from_numpy(image.copy()).float().to(self._device).permute(2, 0, 1)
                 / 255.0

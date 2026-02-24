@@ -56,6 +56,8 @@ class VideoPipelineConfig:
     slice_radius: float = 10.0  # 切片半径（米）
     # 导航输出配置
     output_navigation_ply: bool = True  # 是否输出导航用点云（机器人坐标系）
+    # 输入分辨率配置（降低可加速处理，但会损失精度）
+    internal_resolution: int = 1024  # 内部处理分辨率（默认1024，原始为1536）
 
 
 class VideoPipelineProcessor:
@@ -482,8 +484,9 @@ class VideoPipelineProcessor:
             image, _, f_px = io.load_rgb(frame_path)
             height, width = image.shape[:2]
 
-            # 预处理
-            internal_shape = (1536, 1536)
+            # 预处理（使用配置的内部分辨率）
+            res = self.config.internal_resolution
+            internal_shape = (res, res)
             image_pt = (
                 torch.from_numpy(image.copy()).float().to(self._device).permute(2, 0, 1)
                 / 255.0

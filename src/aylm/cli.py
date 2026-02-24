@@ -343,6 +343,7 @@ def cmd_video_process(args: argparse.Namespace) -> int:
             semantic_confidence=args.semantic_confidence,
             enable_slice=enable_slice,
             slice_radius=getattr(args, "slice_radius", 10.0),
+            internal_resolution=getattr(args, "resolution", 1024),
         )
         stats = VideoPipelineProcessor(pipeline_config).process(video_path, output_dir)
 
@@ -518,6 +519,7 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
     print(f"  点云切片: {'是' if enable_slice else '否'}")
     if enable_slice:
         print(f"    半径: {args.slice_radius}m")
+    print(f"  处理分辨率: {args.resolution}x{args.resolution}")
     print(f"  详细输出: {'是' if verbose else '否'}")
 
     print("\n[流水线策略]")
@@ -543,6 +545,7 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
             semantic_confidence=args.semantic_confidence,
             enable_slice=enable_slice,
             slice_radius=args.slice_radius,
+            internal_resolution=args.resolution,
         )
         stats = PipelineProcessor(config).process(input_dir, output_dir)
 
@@ -618,6 +621,13 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("--slice", action="store_true", default=True, help="启用点云切片")
     p.add_argument("--no-slice", action="store_true", help="禁用点云切片")
     p.add_argument("--slice-radius", type=float, default=10.0, help="切片半径(米)")
+    # 分辨率选项
+    p.add_argument(
+        "--resolution",
+        type=int,
+        default=1024,
+        help="内部处理分辨率(默认1024，原始1536，越低越快但精度降低)",
+    )
     p.add_argument(
         "-v",
         "--verbose",
@@ -651,6 +661,13 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("--slice", action="store_true", default=True, help="启用点云切片")
     p.add_argument("--no-slice", action="store_true", help="禁用点云切片")
     p.add_argument("--slice-radius", type=float, default=10.0, help="切片半径(米)")
+    # 分辨率选项
+    p.add_argument(
+        "--resolution",
+        type=int,
+        default=1024,
+        help="内部处理分辨率(默认1024，原始1536，越低越快但精度降低)",
+    )
     p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
     p.set_defaults(func=cmd_video_process)
 
