@@ -320,7 +320,7 @@ class PipelineProcessor:
             return torch.device(self.config.device)
         if torch.cuda.is_available():
             return torch.device("cuda")
-        if hasattr(torch, "mps") and torch.mps.is_available():
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             return torch.device("mps")
         return torch.device("cpu")
 
