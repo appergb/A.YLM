@@ -566,6 +566,62 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_fuse(args: argparse.Namespace) -> int:
+    """多帧点云配准融合."""
+    input_dir = Path(args.input)
+    if not input_dir.exists():
+        logger.error(f"输入目录不存在: {input_dir}")
+        return 1
+
+    output_path = Path(args.output) if args.output else input_dir / "fused_map.ply"
+
+    if args.verbose:
+        logging.getLogger("aylm").setLevel(logging.DEBUG)
+
+    print(f"AYLM v{get_version()} - 多帧点云融合\n")
+    print(f"[输入] {input_dir}")
+    print(f"[模式] {args.pattern}")
+    print("[配置]")
+    print(f"  ICP距离: {args.icp_distance}m")
+    print(f"  体素大小: {args.voxel_size}m")
+    print(f"[输出] {output_path}")
+    print("=" * 50)
+
+    try:
+        from aylm.tools.multiframe_fusion import MultiframeFusion, RegistrationConfig
+
+        config = RegistrationConfig(
+            icp_max_correspondence_distance=args.icp_distance,
+            fusion_voxel_size=args.voxel_size,
+        )
+
+        fusion = MultiframeFusion(config)
+        result = fusion.fuse_from_directory(input_dir, args.pattern)
+
+        if len(result.fused_pointcloud.points) == 0:
+            logger.error("融合失败，未生成有效点云")
+            return 1
+
+        fusion.save_fused_map(result, output_path)
+
+        print("\n" + "=" * 50)
+        print("[完成] 多帧融合结束")
+        print(f"  总帧数: {result.total_frames}")
+        print(f"  成功配准: {result.successful_registrations}")
+        print(f"  融合点数: {len(result.fused_pointcloud.points)}")
+        print(f"  耗时: {result.fusion_time:.2f}s")
+
+        return 0
+
+    except ImportError as e:
+        logger.error(f"导入融合模块失败: {e}")
+        logger.error("请确保已安装 Open3D: pip install open3d")
+        return 1
+    except Exception as e:
+        logger.error(f"融合失败: {e}")
+        return 1
+
+
 def create_parser() -> argparse.ArgumentParser:
     """创建命令行解析器."""
     parser = argparse.ArgumentParser(
@@ -670,6 +726,18 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("--loop", action="store_true", help="循环播放")
     p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
     p.set_defaults(func=cmd_video_play)
+
+    # fuse - 多帧点云融合
+    p = subs.add_parser("fuse", help="多帧点云配准融合")
+    p.add_argument("-i", "--input", required=True, help="输入点云目录")
+    p.add_argument("-o", "--output", help="输出融合地图路径")
+    p.add_argument("--pattern", default="vox_*.ply", help="文件匹配模式")
+    p.add_argument(
+        "--icp-distance", type=float, default=0.05, help="ICP最大对应距离(米)"
+    )
+    p.add_argument("--voxel-size", type=float, default=0.02, help="融合后体素大小(米)")
+    p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
+    p.set_defaults(func=cmd_fuse)
 
     return parser
 

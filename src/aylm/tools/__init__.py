@@ -6,6 +6,13 @@ from .coordinate_utils import (
     transform_for_navigation,
     transform_obstacle_center,
 )
+from .multiframe_fusion import (
+    FramePose,
+    FusionResult,
+    MultiframeFusion,
+    RegistrationConfig,
+    RegistrationResult,
+)
 from .object_detector import DetectorConfig, ObjectDetector
 from .obstacle_marker import (
     ObstacleBox3D,
@@ -79,4 +86,10 @@ __all__ = [
     "opencv_to_robot",
     "robot_to_opencv",
     "transform_obstacle_center",
+    # 多帧融合
+    "MultiframeFusion",
+    "RegistrationConfig",
+    "RegistrationResult",
+    "FramePose",
+    "FusionResult",
 ]
