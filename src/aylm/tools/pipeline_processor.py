@@ -1092,10 +1092,11 @@ class PipelineProcessor:
 
             voxel_future: Future | None = None
             semantic_future: Future | None = None
+            current_voxel_task: ImageTask | None = None  # 当前正在体素化的任务
 
             # 待处理队列
-            pending_voxel: tuple[ImageTask, Path] | None = None  # (task, output_dir)
-            pending_semantic: tuple[ImageTask, Path] | None = None  # (task, voxel_path)
+            pending_voxel_task: ImageTask | None = None  # 等待体素化的任务
+            pending_semantic: tuple[ImageTask, Path] | None = None  # 等待语义检测
 
             for i, task in enumerate(self._tasks):
                 self.log.info(f"\n{'─' * 40}")
@@ -1103,10 +1104,10 @@ class PipelineProcessor:
 
                 # 显示当前并行状态
                 parallel_info = []
-                if i >= 1:
-                    parallel_info.append(f"体素化第{i}张")
-                if i >= 2 and self.config.enable_semantic:
-                    parallel_info.append(f"语义第{i-1}��")
+                if pending_voxel_task is not None:
+                    parallel_info.append(f"体素化第{pending_voxel_task.index+1}张")
+                if pending_semantic is not None and self.config.enable_semantic:
+                    parallel_info.append(f"语义第{pending_semantic[0].index+1}张")
                 if parallel_info:
                     self.log.info(
                         f"  并行: 推理第{i+1}张 || {' || '.join(parallel_info)}"
@@ -1129,18 +1130,18 @@ class PipelineProcessor:
                     pending_semantic = None
 
                 # 启动体素化（如果有待处理的）
-                if pending_voxel is not None:
-                    vox_task, _ = pending_voxel
+                if pending_voxel_task is not None:
+                    current_voxel_task = pending_voxel_task
                     self.log.progress(
-                        f"  启动体素化: [{vox_task.index+1}] {vox_task.image_path.name}"
+                        f"  启动体素化: [{current_voxel_task.index+1}] {current_voxel_task.image_path.name}"
                     )
                     voxel_future = voxel_executor.submit(
                         self._voxelize_single,
-                        vox_task,
+                        current_voxel_task,
                         voxel_output_dir,
                         navigation_dir,
                     )
-                    pending_voxel = None
+                    pending_voxel_task = None
 
                 # 执行当前图片的推理（主线程）
                 predict_success = self._predict_single(task, output_dir)
@@ -1149,32 +1150,32 @@ class PipelineProcessor:
                 if voxel_future is not None:
                     try:
                         voxel_path = voxel_future.result()
-                        if voxel_path is not None:
+                        if voxel_path is not None and current_voxel_task is not None:
                             # 将体素化结果加入语义检测队列
-                            pending_semantic = (vox_task, voxel_path)
+                            pending_semantic = (current_voxel_task, voxel_path)
                     except Exception as e:
                         self.log.error(f"体素化任务异常: {e}")
                     voxel_future = None
+                    current_voxel_task = None
 
                 # 记录当前任务用于下一轮的体素化
                 if predict_success:
-                    pending_voxel = (task, voxel_output_dir)
+                    pending_voxel_task = task
 
             # 处理剩余的体素化任务
-            if pending_voxel is not None:
+            if pending_voxel_task is not None:
                 self.log.info(f"\n{'─' * 40}")
                 self.log.info("收尾阶段: 处理剩余任务")
 
-                vox_task, _ = pending_voxel
                 self.log.progress(
-                    f"  体素化: [{vox_task.index+1}] {vox_task.image_path.name}"
+                    f"  体素化: [{pending_voxel_task.index+1}] {pending_voxel_task.image_path.name}"
                 )
                 voxel_path = self._voxelize_single(
-                    vox_task, voxel_output_dir, navigation_dir
+                    pending_voxel_task, voxel_output_dir, navigation_dir
                 )
 
                 if voxel_path is not None:
-                    pending_semantic = (vox_task, voxel_path)
+                    pending_semantic = (pending_voxel_task, voxel_path)
 
             # 等待最后的语义检测完成
             if semantic_future is not None:
