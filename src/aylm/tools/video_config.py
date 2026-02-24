@@ -5,6 +5,7 @@
 
 import logging
 from dataclasses import asdict
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +51,7 @@ def _validate_range(value: Any, min_val: float, max_val: float, name: str) -> No
         )
 
 
-def _validate_enum(value: str, enum_class: type, name: str) -> None:
+def _validate_enum(value: str, enum_class: type[Enum], name: str) -> None:
     """验证枚举值。"""
     valid_values = [e.value for e in enum_class]
     if value not in valid_values:

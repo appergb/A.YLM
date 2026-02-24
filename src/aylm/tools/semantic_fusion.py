@@ -499,7 +499,8 @@ class SemanticFusion:
         # 使用 defaultdict 聚合每个体素的点索引
         voxel_dict: dict[tuple[int, int, int], list[int]] = defaultdict(list)
         for i, idx in enumerate(voxel_indices):
-            voxel_dict[tuple(int(x) for x in idx)].append(i)
+            key: tuple[int, int, int] = (int(idx[0]), int(idx[1]), int(idx[2]))
+            voxel_dict[key].append(i)
 
         # 过滤：只保留点数达到阈值的体素
         solid_voxels = {k: v for k, v in voxel_dict.items() if len(v) >= min_points}

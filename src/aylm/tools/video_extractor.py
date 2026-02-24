@@ -9,10 +9,9 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import Any, Callable
 
 import cv2
-import numpy as np
 
 from .video_types import (
     FrameExtractionMethod,
@@ -21,9 +20,6 @@ from .video_types import (
     VideoConfig,
     VideoMetadata,
 )
-
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)
 
@@ -73,31 +69,36 @@ class VideoExtractor:
         fps, total_frames = metadata.fps, metadata.total_frames
 
         # 计算帧间隔
+        interval_float: float
         if method == FrameExtractionMethod.INTERVAL:
-            interval = max(1, int(self.config.frame_interval * fps))
+            interval_float = float(max(1, int(self.config.frame_interval * fps)))
         elif (
             method == FrameExtractionMethod.UNIFORM
             and self.config.target_fps
             and self.config.target_fps < fps
         ):
-            interval = fps / self.config.target_fps
+            interval_float = fps / self.config.target_fps
         else:
-            interval = max(1, int(fps))  # KEYFRAME 和 SCENE_CHANGE 默认每秒一帧
+            interval_float = float(
+                max(1, int(fps))
+            )  # KEYFRAME 和 SCENE_CHANGE 默认每秒一帧
 
         # 生成帧索引
         if method == FrameExtractionMethod.UNIFORM and (
             not self.config.target_fps or self.config.target_fps >= fps
         ):
             indices = [(i, i / fps) for i in range(total_frames)]
-        elif isinstance(interval, float):
+        elif interval_float != int(interval_float):
+            # 非整数间隔，使用浮点累加
             indices = []
             i = 0.0
             while int(i) < total_frames:
                 frame_idx = int(i)
                 indices.append((frame_idx, frame_idx / fps))
-                i += interval
+                i += interval_float
         else:
-            indices = [(i, i / fps) for i in range(0, total_frames, interval)]
+            interval_int = int(interval_float)
+            indices = [(i, i / fps) for i in range(0, total_frames, interval_int)]
 
         # 限制最大帧数
         if self.config.max_frames:
@@ -105,7 +106,7 @@ class VideoExtractor:
 
         return indices
 
-    def compress_frame(self, frame: NDArray[np.uint8]) -> NDArray[np.uint8]:
+    def compress_frame(self, frame: Any) -> Any:
         """压缩帧图像（调整大小）。"""
         if self.config.resize_width is None and self.config.resize_height is None:
             return frame
@@ -153,13 +154,13 @@ class VideoExtractor:
         try:
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
             ret, frame = cap.read()
-            if not ret:
+            if not ret or frame is None:
                 logger.warning(f"Cannot read frame {frame_index} from {video_path}")
                 return None
 
-            frame = self.compress_frame(frame)
+            compressed = self.compress_frame(frame)
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            cv2.imwrite(str(output_path), frame, self._get_image_write_params())
+            cv2.imwrite(str(output_path), compressed, self._get_image_write_params())
 
             fps = cap.get(cv2.CAP_PROP_FPS)
             return FrameInfo(
@@ -190,13 +191,13 @@ class VideoExtractor:
             for frame_index, timestamp in frame_indices:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
                 ret, frame = cap.read()
-                if not ret:
+                if not ret or frame is None:
                     logger.warning(f"Cannot read frame {frame_index} from {video_path}")
                     continue
 
-                frame = self.compress_frame(frame)
+                compressed = self.compress_frame(frame)
                 output_path = output_dir / f"frame_{frame_index:06d}.{output_format}"
-                cv2.imwrite(str(output_path), frame, params)
+                cv2.imwrite(str(output_path), compressed, params)
 
                 frames.append(
                     FrameInfo(
@@ -233,7 +234,7 @@ class VideoExtractor:
         start_time = time.time()
         metadata, output_dir, error = self._prepare_extraction(video_path, output_dir)
 
-        if error:
+        if error or metadata is None:
             return FrameExtractionResult(
                 video_path=video_path, output_dir=output_dir, error_message=error
             )
@@ -270,7 +271,7 @@ class VideoExtractor:
         start_time = time.time()
         metadata, output_dir, error = self._prepare_extraction(video_path, output_dir)
 
-        if error:
+        if error or metadata is None:
             return FrameExtractionResult(
                 video_path=video_path, output_dir=output_dir, error_message=error
             )

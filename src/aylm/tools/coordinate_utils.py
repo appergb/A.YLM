@@ -223,7 +223,7 @@ def _read_ply(
                 raise ValueError("PLY文件数据不完整")
             values = line.split()
             points.append([float(values[0]), float(values[1]), float(values[2])])
-            if has_colors and len(values) >= 6:
+            if has_colors and colors is not None and len(values) >= 6:
                 colors.append([int(values[3]), int(values[4]), int(values[5])])
 
     return header_lines, np.array(points), has_colors, colors

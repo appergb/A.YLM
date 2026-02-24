@@ -123,10 +123,11 @@ class VideoPipelineProcessor:
                     model_url, progress=True, map_location=self._device
                 )
 
-            self._predictor = create_predictor(PredictorParams())
-            self._predictor.load_state_dict(state_dict)
-            self._predictor.eval()
-            self._predictor.to(self._device)
+            predictor = create_predictor(PredictorParams())
+            predictor.load_state_dict(state_dict)
+            predictor.eval()
+            predictor.to(self._device)
+            self._predictor = predictor
 
             self._model_loaded = True
             logger.info("Model loaded successfully")
@@ -282,6 +283,7 @@ class VideoPipelineProcessor:
             height, width = image.shape[:2]
 
             # 执行目标检测
+            assert self._detector is not None, "Detector not initialized"
             detections = self._detector.detect(image, return_masks=True)
             logger.info(f"Detected {len(detections)} objects in {frame_path.name}")
             for det in detections:
@@ -502,6 +504,7 @@ class VideoPipelineProcessor:
             )
 
             # 推理
+            assert self._predictor is not None, "Model not loaded"
             gaussians_ndc = self._predictor(image_resized_pt, disparity_factor)
 
             # 后处理
@@ -542,6 +545,7 @@ class VideoPipelineProcessor:
 
             # 体素化
             voxel_path = voxel_output_dir / f"vox_{frame_path.stem}.ply"
+            assert self._voxelizer is not None, "Voxelizer not initialized"
             self._voxelizer.process(
                 input_ply_path,
                 voxel_path,
@@ -674,9 +678,14 @@ class VideoPipelineProcessor:
                     self.stats.total_processing_time += process_time
 
                     if self.config.verbose:
+                        output_name = (
+                            frame_info.output_path.name
+                            if frame_info.output_path
+                            else f"frame_{frame_info.index}"
+                        )
                         logger.info(
                             f"Processed frame {processed_count}: "
-                            f"{frame_info.output_path.name} ({process_time:.2f}s)"
+                            f"{output_name} ({process_time:.2f}s)"
                         )
 
                     if progress_callback:

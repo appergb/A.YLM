@@ -494,7 +494,7 @@ class VoxelPlayer:
         logger.info(f"Exporting video to {output_path}")
         logger.info(f"  Resolution: {width}x{height}, FPS: {fps}")
 
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
         writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
 
         try:
@@ -534,7 +534,9 @@ class VoxelPlayer:
                 ax.set_title(f"Frame {i + 1}/{len(self._ply_files)}")
 
                 fig.canvas.draw()
-                img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+                img = np.frombuffer(
+                    fig.canvas.tostring_rgb(), dtype=np.uint8  # type: ignore[attr-defined]
+                )
                 img = img.reshape((*fig.canvas.get_width_height()[::-1], 3))
                 img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
@@ -707,6 +709,7 @@ def play_sequence(
         >>> play_sequence("output/voxelized", fps=15, loop=True)
     """
     config = PlayerConfig(fps=fps, loop=loop)
+    player: VoxelPlayer | MatplotlibVoxelPlayer
 
     if HAS_OPEN3D:
         player = VoxelPlayer(config)

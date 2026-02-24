@@ -517,7 +517,7 @@ class PointCloudVoxelizer:
             # 找最佳平面
             best_idx = inliers_count.argmax()
             if inliers_count[best_idx] > best_inlier_count:
-                best_inlier_count = inliers_count[best_idx].item()
+                best_inlier_count = int(inliers_count[best_idx].item())
                 best_inliers_mask = (
                     distances[:, best_idx] < cfg.ransac_distance_threshold
                 )
@@ -565,12 +565,12 @@ class PointCloudVoxelizer:
         for i, key in enumerate(map(tuple, voxel_indices)):
             voxel_dict.setdefault(key, []).append(i)
 
-        new_points = []
-        new_colors = [] if pc.colors is not None else None
+        new_points: list[np.ndarray] = []
+        new_colors: list[np.ndarray] | None = [] if pc.colors is not None else None
 
         for indices in voxel_dict.values():
             new_points.append(pc.points[indices].mean(axis=0))
-            if pc.colors is not None:
+            if pc.colors is not None and new_colors is not None:
                 new_colors.append(pc.colors[indices].mean(axis=0))
 
         points = np.array(new_points)

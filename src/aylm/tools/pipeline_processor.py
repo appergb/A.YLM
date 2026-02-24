@@ -14,7 +14,13 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable, ClassVar
+from typing import TYPE_CHECKING, Callable, ClassVar
+
+if TYPE_CHECKING:
+    from torch.nn import Module
+
+    from aylm.tools.object_detector import ObjectDetector
+    from aylm.tools.pointcloud_voxelizer import PointCloudVoxelizer
 
 import torch
 from torch.nn import functional as functional_nn
@@ -228,11 +234,11 @@ class PipelineProcessor:
         self.log = PipelineLogger(self.config.verbose)
         self.stats = PipelineStats()
 
-        self._predictor = None
+        self._predictor: Module | None = None
         self._device: torch.device | None = None
         self._model_loaded = False
-        self._voxelizer = None
-        self._detector = None  # YOLO 语义检测器
+        self._voxelizer: PointCloudVoxelizer | None = None
+        self._detector: ObjectDetector | None = None  # YOLO 语义检测器
         self._tasks: list[ImageTask] = []
         self._stop_event = threading.Event()
         self._predict_lock = threading.Lock()
@@ -353,9 +359,10 @@ class PipelineProcessor:
                 )
 
             self._predictor = create_predictor(PredictorParams())
-            self._predictor.load_state_dict(state_dict)
-            self._predictor.eval()
-            self._predictor.to(self._device)
+            predictor = self._predictor  # 局部变量，mypy 可以推断非 None
+            predictor.load_state_dict(state_dict)
+            predictor.eval()
+            predictor.to(self._device)
 
             self._model_loaded = True
             self.log.ok("模型加载完成")
@@ -418,6 +425,7 @@ class PipelineProcessor:
 
             # 推理（需要锁保护，因为模型不是线程安全的）
             with self._predict_lock:
+                assert self._predictor is not None, "模型未加载"
                 gaussians_ndc = self._predictor(image_resized_pt, disparity_factor)
 
             # 后处理
@@ -497,6 +505,7 @@ class PipelineProcessor:
 
         try:
             # 确定输入文件（可能经过切片）
+            assert task.ply_output_path is not None, "PLY 输出路径未设置"
             input_ply_path = task.ply_output_path
 
             # 步骤1：切片（如果启用）
@@ -506,6 +515,7 @@ class PipelineProcessor:
                     input_ply_path = sliced_path
 
             # 步骤2：体素化
+            assert self._voxelizer is not None, "体素化器未初始化"
             output_path = output_dir / f"vox_{task.ply_output_path.name}"
             self._voxelizer.process(
                 input_ply_path,
@@ -555,6 +565,10 @@ class PipelineProcessor:
             切片后的临时 PLY 文件路径，失败返回 None
         """
         import numpy as np
+
+        if task.ply_output_path is None:
+            self.log.warn("    PLY 输出路径未设置，跳过切片")
+            return None
 
         try:
             from plyfile import PlyData, PlyElement
@@ -646,6 +660,7 @@ class PipelineProcessor:
             height, width = image.shape[:2]
 
             # 执行目标检测
+            assert self._detector is not None, "检测器未初始化"
             detections = self._detector.detect(image, return_masks=True)
             self.log.info(f"    检测到 {len(detections)} 个目标")
 
@@ -802,7 +817,7 @@ class PipelineProcessor:
         if input_path.is_file():
             return [input_path] if input_path.suffix.lower() in extensions else []
 
-        images = []
+        images: list[Path] = []
         for ext in extensions:
             images.extend(input_path.glob(f"*{ext}"))
             images.extend(input_path.glob(f"*{ext.upper()}"))

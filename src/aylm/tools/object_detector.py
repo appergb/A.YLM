@@ -7,10 +7,13 @@
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar, Optional, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union
 
 import numpy as np
 from numpy.typing import NDArray
+
+if TYPE_CHECKING:
+    from ultralytics import YOLO
 
 from .semantic_types import COCO_TO_SEMANTIC, Detection2D, SemanticLabel
 
@@ -50,7 +53,7 @@ class ObjectDetector:
             config: 检测器配置，为 None 时使用默认配置
         """
         self.config = config or DetectorConfig()
-        self._model = None
+        self._model: Optional[YOLO] = None
         self._device = self._detect_device()
 
         # 如果未指定类别，使用默认类别
@@ -142,7 +145,7 @@ class ObjectDetector:
 
     def detect(
         self,
-        image: NDArray[np.uint8],
+        image: NDArray[Any],
         return_masks: bool = True,
     ) -> list[Detection2D]:
         """执行目标检测。
@@ -269,7 +272,7 @@ class ObjectDetector:
 
     def save_detection_image(
         self,
-        image: NDArray[np.uint8],
+        image: NDArray[Any],
         detections: list[Detection2D],
         output_path: Union[str, Path],
         draw_masks: bool = True,
@@ -347,7 +350,9 @@ class ObjectDetector:
                 )
                 mask_colored = np.zeros_like(result_image)
                 mask_colored[mask_resized > 0] = color
-                result_image = cv2.addWeighted(result_image, 1.0, mask_colored, 0.3, 0)
+                result_image = cv2.addWeighted(
+                    result_image, 1.0, mask_colored, 0.3, 0
+                )  # type: ignore[assignment]
 
         # 保存图片
         output_path.parent.mkdir(parents=True, exist_ok=True)
