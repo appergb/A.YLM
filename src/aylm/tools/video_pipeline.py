@@ -49,7 +49,7 @@ class VideoPipelineConfig:
     # 语义检测配置
     enable_semantic: bool = True  # 是否启用语义检测
     semantic_model: str = "yolo11n-seg.pt"  # YOLO 模型
-    semantic_confidence: float = 0.5  # 检测置信度阈值
+    semantic_confidence: float = 0.25  # 检测置信度阈值
     colorize_semantic: bool = True  # 是否根据语义标签着色
     # 点云切片配置
     enable_slice: bool = True  # 是否启用点云切片

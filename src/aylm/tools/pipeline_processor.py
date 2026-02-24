@@ -75,13 +75,13 @@ class PipelineConfig:
     async_mode: bool = False
     # 切片配置
     enable_slice: bool = True  # 是否启用切片
-    slice_radius: float = 20.0  # 切片半径（米）
+    slice_radius: float = 10.0  # 切片半径（米）
     # 语义检测配置
     enable_semantic: bool = True  # 是否启用语义检测（默认开启）
     # 输入分辨率配置（降低可加速处理，但会损失精度）
     internal_resolution: int = 1024  # 内部处理分辨率（默认1024，原始为1536）
     semantic_model: str = "yolo11n-seg.pt"  # YOLO 模型
-    semantic_confidence: float = 0.5  # 检测置信度
+    semantic_confidence: float = 0.25  # 检测置信度
     colorize_semantic: bool = True  # 语义着色
     # 导航输出配置
     output_navigation_ply: bool = True  # 是否输出导航用点云（机器人坐标系）
