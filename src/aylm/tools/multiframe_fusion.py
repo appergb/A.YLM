@@ -185,12 +185,12 @@ class MultiframeFusion:
             logger.error("有效帧数不足，无法配准")
             return FusionResult(fused_pointcloud=PointCloud(np.zeros((0, 3))))
 
-        # 2. 相邻帧配准
+        # 2. 相邻帧配准（前一帧 -> 后一帧）
         logger.info("执行相邻帧配准...")
         pairwise_results: list[RegistrationResult | None] = []
         for i in range(len(processed) - 1):
-            source_pcd, source_fpfh, _ = processed[i + 1]
-            target_pcd, target_fpfh, _ = processed[i]
+            source_pcd, source_fpfh, _ = processed[i]
+            target_pcd, target_fpfh, _ = processed[i + 1]
 
             result = self._register_pair_o3d(
                 source_pcd, target_pcd, source_fpfh, target_fpfh
@@ -198,12 +198,12 @@ class MultiframeFusion:
 
             if result.fitness < self.config.min_fitness:
                 logger.warning(
-                    f"帧 {valid_indices[i+1]} -> {valid_indices[i]} "
+                    f"帧 {valid_indices[i]} -> {valid_indices[i+1]} "
                     f"配准质量低 (fitness={result.fitness:.3f})"
                 )
             pairwise_results.append(result)
             logger.debug(
-                f"帧 {valid_indices[i+1]} -> {valid_indices[i]}: "
+                f"帧 {valid_indices[i]} -> {valid_indices[i+1]}: "
                 f"fitness={result.fitness:.3f}, rmse={result.inlier_rmse:.4f}"
             )
 
@@ -493,19 +493,30 @@ class MultiframeFusion:
         processed: list[tuple],
         pairwise_results: list[RegistrationResult | None],
     ) -> o3d.pipelines.registration.PoseGraph:
-        """构建位姿图。"""
+        """构建位姿图。
+
+        以第一帧为世界坐标系原点，累积后续帧的位姿。
+        配准结果 T_{i->i+1} 表示把帧i变换到帧i+1。
+        我们需要的是把每帧变换到帧0（世界坐标系）。
+        """
         pose_graph = o3d.pipelines.registration.PoseGraph()
         n_frames = len(processed)
 
-        # 添加节点
-        odometry = np.eye(4)
-        pose_graph.nodes.append(o3d.pipelines.registration.PoseGraphNode(odometry))
+        # 第一帧位姿为单位矩阵（世界坐标系原点）
+        pose_graph.nodes.append(o3d.pipelines.registration.PoseGraphNode(np.eye(4)))
 
+        # 累积位姿：T_0^i = T_0^{i-1} @ inv(T_{i-1->i})
+        # 因为 T_{i-1->i} 把帧i-1变换到帧i，所以逆变换把帧i变换到帧i-1
+        cumulative_pose = np.eye(4)
         for i in range(1, n_frames):
             result = pairwise_results[i - 1]
             if result is not None:
-                odometry = result.transformation @ odometry
-            pose_graph.nodes.append(o3d.pipelines.registration.PoseGraphNode(odometry))
+                # T_{i-1->i} 的逆，把帧i变换到帧i-1的坐标系
+                inv_transform = np.linalg.inv(result.transformation)
+                cumulative_pose = cumulative_pose @ inv_transform
+            pose_graph.nodes.append(
+                o3d.pipelines.registration.PoseGraphNode(cumulative_pose.copy())
+            )
 
         # 添加边（相邻帧）
         for i in range(n_frames - 1):

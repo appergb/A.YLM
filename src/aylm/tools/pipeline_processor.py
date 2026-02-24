@@ -485,23 +485,27 @@ class PipelineProcessor:
 
     def _voxelize_single(
         self, task: ImageTask, output_dir: Path, navigation_dir: Path | None = None
-    ) -> bool:
-        """对单个PLY文件进行切片、体素化，可选语义融合。
+    ) -> Path | None:
+        """对单个PLY文件进行切片、体素化。
 
-        处理流程：SHARP输出 → 切片 → 体素化 → 语义融合
+        处理流程：SHARP输出 → 切片 → 体素化
+        语义融合在外部异步执行。
 
         Args:
             task: 图像任务
             output_dir: 体素化输出目录
-            navigation_dir: 导航用点云输出目录（机器人坐标系）
+            navigation_dir: 导航用点云输出目录（未使用，保留兼容性）
+
+        Returns:
+            体素化后的 PLY 文件路径，失败返回 None
         """
         if task.status != TaskStatus.PREDICTED or task.ply_output_path is None:
-            return False
+            return None
 
         task.status = TaskStatus.VOXELIZING
         task.voxel_start_time = time.time()
 
-        self.log.progress(f"[{task.index+1}] 开始处理: {task.ply_output_path.name}")
+        self.log.progress(f"[{task.index+1}] 开始体素化: {task.ply_output_path.name}")
 
         try:
             # 确定输入文件（可能经过切片）
@@ -529,30 +533,45 @@ class PipelineProcessor:
                 with contextlib.suppress(Exception):
                     input_ply_path.unlink()
 
-            # 步骤3：语义融合（如果启用）
-            if self.config.enable_semantic and self._detector is not None:
-                self._apply_semantic_fusion(task, output_path, navigation_dir)
-
             task.voxel_output_path = output_path
-            task.status = TaskStatus.COMPLETED
-            task.voxel_end_time = time.time()
-
-            voxel_time = task.voxel_end_time - task.voxel_start_time
+            voxel_time = time.time() - task.voxel_start_time
             self.log.ok(
-                f"[{task.index+1}] 处理完成: {task.ply_output_path.name} ({voxel_time:.2f}s)"
+                f"[{task.index+1}] 体素化完成: {output_path.name} ({voxel_time:.2f}s)"
             )
-            self.log.info(f"    输出: {output_path.name}")
 
-            return True
+            return output_path
 
         except Exception as e:
             task.status = TaskStatus.FAILED
             task.error_message = str(e)
             task.voxel_end_time = time.time()
-            self.log.error(f"[{task.index+1}] 处理失败: {task.ply_output_path.name}")
-            self.log.error(f"    错误类型: {type(e).__name__}")
-            self.log.error(f"    错误信息: {e}")
-            logger.exception(f"处理异常详情 - {task.ply_output_path.name}")
+            self.log.error(f"[{task.index+1}] 体素化失败: {task.ply_output_path.name}")
+            self.log.error(f"    错误: {e}")
+            logger.exception(f"体素化异常 - {task.ply_output_path.name}")
+            return None
+
+    def _semantic_and_navigation(
+        self, task: ImageTask, voxel_path: Path, navigation_dir: Path | None = None
+    ) -> bool:
+        """执行语义检测和导航输出（可异步调用）。
+
+        Args:
+            task: 图像任务
+            voxel_path: 体素化后的 PLY 文件路径
+            navigation_dir: 导航输出目录
+
+        Returns:
+            是否成功
+        """
+        try:
+            self._apply_semantic_fusion(task, voxel_path, navigation_dir)
+            task.status = TaskStatus.COMPLETED
+            task.voxel_end_time = time.time()
+            return True
+        except Exception as e:
+            self.log.error(f"[{task.index+1}] 语义处理失败: {e}")
+            task.status = TaskStatus.COMPLETED  # 体素化成功，语义失败不算整体失败
+            task.voxel_end_time = time.time()
             return False
 
     def _apply_slice(self, task: ImageTask) -> Path | None:
@@ -1034,10 +1053,10 @@ class PipelineProcessor:
     ):
         """执行流水线处理逻辑。
 
-        流水线策略:
-        1. 第一张图片: 只做推理（无并行）
-        2. 第2到N张图片: 推理第N张 || 体素化第N-1张（并行）
-        3. 最后: 体素化最后一张图片（无并行）
+        三级并行流水线:
+        - 推理(N): 主线程执行 SHARP 推理
+        - 体素化(N-1): 线程1 执行体素化
+        - 语义检测(N-2): 线程2 执行语义检测和导航输出
 
         时间线示意:
             图片1: [====推理====]
@@ -1045,7 +1064,10 @@ class PipelineProcessor:
             图片1:              [====体素化====]
             图片3:                            [====推理====]
             图片2:                            [====体素化====]
+            图片1:                            [====语义====]
             ...
+
+        每帧完成语义检测后立即输出导航点云，实现快速响应。
 
         Args:
             output_dir: PLY 输出目录
@@ -1058,54 +1080,116 @@ class PipelineProcessor:
             self.log.warn("没有任务需要处理")
             return
 
-        # 使用线程池执行体素化（推理在主线程，因为GPU操作需要同步）
-        with ThreadPoolExecutor(max_workers=1) as voxel_executor:
+        # 使用两个线程池：体素化和语义检测
+        with (
+            ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="voxel"
+            ) as voxel_executor,
+            ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="semantic"
+            ) as semantic_executor,
+        ):
+
             voxel_future: Future | None = None
-            prev_task_for_voxel: ImageTask | None = None
+            semantic_future: Future | None = None
+
+            # 待处理队列
+            pending_voxel: tuple[ImageTask, Path] | None = None  # (task, output_dir)
+            pending_semantic: tuple[ImageTask, Path] | None = None  # (task, voxel_path)
 
             for i, task in enumerate(self._tasks):
                 self.log.info(f"\n{'─' * 40}")
                 self.log.info(f"处理进度: {i+1}/{total}")
 
-                # 显示当前阶段的并行状态
-                if i == 0:
-                    self.log.info("  阶段: 推理第1张（无并行）")
-                elif i < total:
-                    self.log.info(f"  阶段: 推理第{i+1}张 || 体素化第{i}张（并行）")
+                # 显示当前并行状态
+                parallel_info = []
+                if i >= 1:
+                    parallel_info.append(f"体素化第{i}张")
+                if i >= 2 and self.config.enable_semantic:
+                    parallel_info.append(f"语义第{i-1}��")
+                if parallel_info:
+                    self.log.info(
+                        f"  并行: 推理第{i+1}张 || {' || '.join(parallel_info)}"
+                    )
+                else:
+                    self.log.info(f"  阶段: 推理第{i+1}张")
 
-                # 如果有上一张图片需要体素化，启动异步体素化
-                if prev_task_for_voxel is not None:
+                # 启动语义检测（如果有待处理的）
+                if pending_semantic is not None and self.config.enable_semantic:
+                    sem_task, sem_voxel_path = pending_semantic
                     self.log.progress(
-                        f"  启动并行体素化: [{prev_task_for_voxel.index+1}] {prev_task_for_voxel.image_path.name}"
+                        f"  启动语义检测: [{sem_task.index+1}] {sem_task.image_path.name}"
+                    )
+                    semantic_future = semantic_executor.submit(
+                        self._semantic_and_navigation,
+                        sem_task,
+                        sem_voxel_path,
+                        navigation_dir,
+                    )
+                    pending_semantic = None
+
+                # 启动体素化（如果有待处理的）
+                if pending_voxel is not None:
+                    vox_task, _ = pending_voxel
+                    self.log.progress(
+                        f"  启动体素化: [{vox_task.index+1}] {vox_task.image_path.name}"
                     )
                     voxel_future = voxel_executor.submit(
                         self._voxelize_single,
-                        prev_task_for_voxel,
+                        vox_task,
                         voxel_output_dir,
                         navigation_dir,
                     )
+                    pending_voxel = None
 
                 # 执行当前图片的推理（主线程）
                 predict_success = self._predict_single(task, output_dir)
 
-                # 等待并行的体素化完成（如果有）
+                # 等待体素化完成，获取结果用于语义检测
                 if voxel_future is not None:
                     try:
-                        voxel_future.result()
+                        voxel_path = voxel_future.result()
+                        if voxel_path is not None:
+                            # 将体素化结果加入语义检测队列
+                            pending_semantic = (vox_task, voxel_path)
                     except Exception as e:
                         self.log.error(f"体素化任务异常: {e}")
                     voxel_future = None
 
                 # 记录当前任务用于下一轮的体素化
-                prev_task_for_voxel = task if predict_success else None
+                if predict_success:
+                    pending_voxel = (task, voxel_output_dir)
 
-            # 处理最后一张图片的体素化（同步执行，无并行）
-            if prev_task_for_voxel is not None:
+            # 处理剩余的体素化任务
+            if pending_voxel is not None:
                 self.log.info(f"\n{'─' * 40}")
-                self.log.info("最终阶段: 体素化最后一张图片")
-                self._voxelize_single(
-                    prev_task_for_voxel, voxel_output_dir, navigation_dir
+                self.log.info("收尾阶段: 处理剩余任务")
+
+                vox_task, _ = pending_voxel
+                self.log.progress(
+                    f"  体素化: [{vox_task.index+1}] {vox_task.image_path.name}"
                 )
+                voxel_path = self._voxelize_single(
+                    vox_task, voxel_output_dir, navigation_dir
+                )
+
+                if voxel_path is not None:
+                    pending_semantic = (vox_task, voxel_path)
+
+            # 等待最后的语义检测完成
+            if semantic_future is not None:
+                try:
+                    semantic_future.result()
+                except Exception as e:
+                    self.log.error(f"语义检测任务异常: {e}")
+
+            # 处理最后一个语义检测
+            if pending_semantic is not None and self.config.enable_semantic:
+                sem_task, sem_voxel_path = pending_semantic
+                self.log.progress(
+                    f"  语义检测: [{sem_task.index+1}] {sem_task.image_path.name}"
+                )
+                self._semantic_and_navigation(sem_task, sem_voxel_path, navigation_dir)
 
 
 def run_pipeline(
