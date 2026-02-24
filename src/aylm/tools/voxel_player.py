@@ -535,7 +535,7 @@ class VoxelPlayer:
 
                 fig.canvas.draw()
                 img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-                img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+                img = img.reshape((*fig.canvas.get_width_height()[::-1], 3))
                 img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
                 writer.write(img_bgr)

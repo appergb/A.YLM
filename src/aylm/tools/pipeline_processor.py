@@ -14,7 +14,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable
+from typing import Callable, ClassVar
 
 import torch
 from torch.nn import functional as functional_nn
@@ -126,7 +126,7 @@ class PipelineStats:
 class PipelineLogger:
     """流水线日志记录器。"""
 
-    LEVEL_PREFIX = {
+    LEVEL_PREFIX: ClassVar[dict[str, str]] = {
         "INFO": "   ",
         "STAGE": ">>>",
         "OK": " ✓ ",
@@ -135,7 +135,7 @@ class PipelineLogger:
         "PROGRESS": " → ",
     }
 
-    STATUS_DISPLAY = {
+    STATUS_DISPLAY: ClassVar[dict[TaskStatus, str]] = {
         TaskStatus.PENDING: "⏳ 等待中",
         TaskStatus.PREDICTING: "🔄 推理中",
         TaskStatus.PREDICTED: "📦 待体素化",

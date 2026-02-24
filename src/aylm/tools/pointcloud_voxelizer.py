@@ -172,7 +172,7 @@ class PointCloudVoxelizer:
         """使用Open3D去除离群点。"""
         pcd = self._to_o3d(pc)
 
-        pcd_clean, indices = pcd.remove_statistical_outlier(
+        _pcd_clean, indices = pcd.remove_statistical_outlier(
             nb_neighbors=cfg.statistical_nb_neighbors,
             std_ratio=cfg.statistical_std_ratio,
         )

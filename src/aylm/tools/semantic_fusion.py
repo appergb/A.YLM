@@ -334,7 +334,7 @@ class SemanticFusion:
         colors = semantic_pc.colorize_by_semantic()
 
         # 体素化：基于密度阈值生成实体方块信息
-        voxel_centers, voxel_colors, voxel_labels, _, _ = self._create_solid_voxels(
+        voxel_centers, voxel_colors, _voxel_labels, _, _ = self._create_solid_voxels(
             robot_points,
             colors,
             semantic_pc.labels,

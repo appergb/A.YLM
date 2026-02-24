@@ -7,7 +7,7 @@
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Union
+from typing import ClassVar, Optional, Union
 
 import numpy as np
 from numpy.typing import NDArray
@@ -41,7 +41,7 @@ class ObjectDetector:
     """
 
     # 默认检测类别：人、自行车、汽车、摩托车、公交车、卡车
-    DEFAULT_CLASSES: list[int] = [0, 1, 2, 3, 5, 7]
+    DEFAULT_CLASSES: ClassVar[list[int]] = [0, 1, 2, 3, 5, 7]
 
     def __init__(self, config: Optional[DetectorConfig] = None):
         """初始化检测器。
@@ -318,7 +318,7 @@ class ObjectDetector:
 
             # 绘制标签背景
             label_text = f"{label_name} {det.confidence:.2f}"
-            (text_w, text_h), baseline = cv2.getTextSize(
+            (text_w, text_h), _baseline = cv2.getTextSize(
                 label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
             )
             cv2.rectangle(
