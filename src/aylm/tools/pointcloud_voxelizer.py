@@ -79,6 +79,62 @@ class PointCloud:
         colors = self.colors[mask] if self.colors is not None else None
         return PointCloud(points=self.points[mask], colors=colors)
 
+    @classmethod
+    def from_ply(cls, path: "Path") -> "PointCloud":
+        """从 PLY 文件加载点云。"""
+        ply = PlyData.read(str(path))
+        vertex = ply["vertex"]
+
+        points = np.column_stack([vertex["x"], vertex["y"], vertex["z"]])
+
+        colors = None
+        if "red" in vertex.data.dtype.names:
+            colors = np.column_stack(
+                [vertex["red"], vertex["green"], vertex["blue"]]
+            ).astype(np.float64)
+            if colors.max() > 1.0:
+                colors = colors / 255.0
+
+        return cls(points=points.astype(np.float64), colors=colors)
+
+    def to_ply(self, path: "Path") -> None:
+        """保存点云到 PLY 文件。"""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        n = len(self.points)
+        if self.colors is not None:
+            colors = self.colors
+            if colors.max() <= 1.0:
+                colors = (colors * 255).astype(np.uint8)
+            else:
+                colors = colors.astype(np.uint8)
+
+            dtype = [
+                ("x", "f4"),
+                ("y", "f4"),
+                ("z", "f4"),
+                ("red", "u1"),
+                ("green", "u1"),
+                ("blue", "u1"),
+            ]
+            data = np.zeros(n, dtype=dtype)
+            data["x"] = self.points[:, 0]
+            data["y"] = self.points[:, 1]
+            data["z"] = self.points[:, 2]
+            data["red"] = colors[:, 0]
+            data["green"] = colors[:, 1]
+            data["blue"] = colors[:, 2]
+        else:
+            dtype = [("x", "f4"), ("y", "f4"), ("z", "f4")]
+            data = np.zeros(n, dtype=dtype)
+            data["x"] = self.points[:, 0]
+            data["y"] = self.points[:, 1]
+            data["z"] = self.points[:, 2]
+
+        vertex = PlyElement.describe(data, "vertex")
+        PlyData([vertex], text=False).write(str(path))
+
 
 class PointCloudVoxelizer:
     """点云体素化处理器。"""
