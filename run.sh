@@ -62,9 +62,6 @@ ${YELLOW}点云切片选项:${NC}
   --no-slice        禁用点云切片
   --slice-radius    切片半径/米 (默认: 10.0)
 
-${YELLOW}性能选项:${NC}
-  --resolution      内部处理分辨率 (默认1152，必须是384的倍数：768/1152/1536)
-
 ${YELLOW}示例:${NC}
   ./run.sh --setup                    # 初始化
   ./run.sh -i ./images                # 处理图像
@@ -164,8 +161,6 @@ main() {
     # 语义检测和切片参数（默认都启用）
     local semantic=true semantic_model="yolo11n-seg.pt" semantic_confidence="0.25"
     local slice=true slice_radius="10.0"
-    # 分辨率参数（默认1152，必须是384的倍数）
-    local resolution="1152"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -190,8 +185,6 @@ main() {
             --slice) slice=true; shift ;;
             --no-slice) slice=false; shift ;;
             --slice-radius) slice_radius="$2"; shift 2 ;;
-            # 分辨率参数
-            --resolution) resolution="$2"; shift 2 ;;
             *) extra_args+=("$1"); shift ;;
         esac
     done
@@ -220,20 +213,17 @@ main() {
         slice_args+=("--no-slice")
     fi
 
-    # 分辨率参数
-    local resolution_args=("--resolution" "$resolution")
-
     case "$action" in
         setup) log_step "下载模型..."; python3 -m aylm.cli setup --download ;;
         voxelize) run_voxelize "${extra_args[@]}" ;;
         predict) run_predict "${extra_args[@]}" ;;
         full) run_full "${extra_args[@]}" ;;
-        pipeline) run_pipeline "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" "${resolution_args[@]}" ;;
+        pipeline) run_pipeline "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" ;;
         video)
             local video_args=("${extra_args[@]}")
             [[ -n "$config_file" ]] && video_args+=("-c" "$config_file")
             [[ "$use_gpu" == true ]] && video_args+=("--use-gpu")
-            video_args+=("${semantic_args[@]}" "${slice_args[@]}" "${resolution_args[@]}")
+            video_args+=("${semantic_args[@]}" "${slice_args[@]}")
             show_banner "视频处理"
             run_video_process "${video_args[@]}" ;;
         video-extract)
@@ -245,7 +235,7 @@ main() {
             local play_args=("-i" "$input_dir" "--fps" "$fps")
             [[ "$loop" == true ]] && play_args+=("--loop")
             run_video_play "${play_args[@]}" ;;
-        auto) run_auto "$input_dir" "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" "${resolution_args[@]}" ;;
+        auto) run_auto "$input_dir" "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" ;;
     esac
 
     log_info "完成"

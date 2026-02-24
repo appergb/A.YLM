@@ -56,9 +56,9 @@ class VideoPipelineConfig:
     slice_radius: float = 10.0  # 切片半径（米）
     # 导航输出配置
     output_navigation_ply: bool = True  # 是否输出导航用点云（机器人坐标系）
-    # 输入分辨率配置（降低可加速处理，但会损失精度）
-    # 注意：必须是 384 的倍数（ViT 要求），有效值：768, 1152, 1536
-    internal_resolution: int = 1152  # 内部处理分辨率（默认1152，原始为1536）
+    # 输入分辨率配置
+    # 注意：SHARP 模型要求固定 1536，因为内部金字塔结构依赖 1536→768→384
+    internal_resolution: int = 1536  # 内部处理分辨率（固定值，不可更改）
 
 
 class VideoPipelineProcessor:

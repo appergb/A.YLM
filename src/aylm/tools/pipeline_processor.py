@@ -78,9 +78,9 @@ class PipelineConfig:
     slice_radius: float = 10.0  # 切片半径（米）
     # 语义检测配置
     enable_semantic: bool = True  # 是否启用语义检测（默认开启）
-    # 输入分辨率配置（降低可加速处理，但会损失精度）
-    # 注意：必须是 384 的倍数（ViT 要求），有效值：768, 1152, 1536
-    internal_resolution: int = 1152  # 内部处理分辨率（默认1152，原始为1536）
+    # 输入分辨率配置
+    # 注意：SHARP 模型要求固定 1536，因为内部金字塔结构依赖 1536→768→384
+    internal_resolution: int = 1536  # 内部处理分辨率（固定值，不可更改）
     semantic_model: str = "yolo11n-seg.pt"  # YOLO 模型
     semantic_confidence: float = 0.25  # 检测置信度
     colorize_semantic: bool = True  # 语义着色
