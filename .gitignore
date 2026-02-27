@@ -39,6 +39,7 @@ yolo*.onnx
 
 # Output files
 outputs/
+.output.txt
 
 # Input files (user data)
 inputs/input_images/*
