@@ -1,0 +1,57 @@
+# A-YLM 宪法配置示例
+# 用户可以根据自己的需求修改此配置
+
+# 宪法原则列表
+principles:
+  # 碰撞检测 - 最高优先级
+  - name: no_collision
+    severity: critical
+    enabled: true
+    params:
+      check_trajectory: true
+      prediction_horizon: 2.0  # 预测时间范围（秒）
+
+  # TTC 安全 - 高优先级
+  - name: ttc_safety
+    severity: high
+    enabled: true
+    params:
+      warning_threshold: 3.0   # 警告阈值（秒）
+      critical_threshold: 1.5  # 关键阈值（秒）
+
+  # 安全跟车距离
+  - name: safe_following
+    severity: high
+    enabled: true
+    params:
+      time_gap: 2.0  # 时间间隔（秒）
+
+  # 车道合规
+  - name: lane_compliance
+    severity: medium
+    enabled: true
+
+  # 速度限制
+  - name: speed_limit
+    severity: medium
+    enabled: true
+    params:
+      max_speed: 120  # km/h
+
+# 安全阈值
+thresholds:
+  ttc_warning: 3.0           # TTC 警告阈值（秒）
+  ttc_critical: 1.5          # TTC 关键阈值（秒）
+  min_safe_distance: 2.0     # 最小安全距离（米）
+  speed_distance_factor: 0.5 # 速度-距离系数
+
+# 打分权重
+weights:
+  collision: 1.0   # 碰撞权重
+  ttc: 0.8         # TTC 权重
+  boundary: 0.5    # 边界权重
+
+# 训练信号配置
+training:
+  generate_positive_signals: false  # 是否生成正样本
+  export_format: json               # 导出格式: json, tfrecord, parquet
