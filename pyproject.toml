@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "aylm"
 version = "2.0.0"
-description = "A.YLM: Hybrid End-to-End Autonomous Driving Perception System based on 3D Gaussian Splatting with Voxel Occupancy 2.0"
+description = "A-YLM: Geometric Constitutional AI for Embodied Intelligence - Bidirectional fusion with E2E driving systems (FSD/ADS), providing 3D point cloud input and safety supervision. Self-supervised learning without human annotation. Edge-deployable real-time geometric validation."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
