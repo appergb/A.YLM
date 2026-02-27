@@ -332,6 +332,10 @@ def cmd_video_process(args: argparse.Namespace) -> int:
         enable_slice = getattr(args, "slice", True) and not getattr(
             args, "no_slice", False
         )
+        # 解析跟踪选项
+        enable_tracking = getattr(args, "track", True) and not getattr(
+            args, "no_track", False
+        )
 
         pipeline_config = VideoPipelineConfig(
             video_config=config,
@@ -343,6 +347,7 @@ def cmd_video_process(args: argparse.Namespace) -> int:
             semantic_confidence=args.semantic_confidence,
             enable_slice=enable_slice,
             slice_radius=getattr(args, "slice_radius", 10.0),
+            enable_tracking=enable_tracking,
         )
         stats = VideoPipelineProcessor(pipeline_config).process(video_path, output_dir)
 
@@ -707,6 +712,9 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("--slice", action="store_true", default=True, help="启用点云切片")
     p.add_argument("--no-slice", action="store_true", help="禁用点云切片")
     p.add_argument("--slice-radius", type=float, default=10.0, help="切片半径(米)")
+    # 目标跟踪选项
+    p.add_argument("--track", action="store_true", default=True, help="启用目标跟踪")
+    p.add_argument("--no-track", action="store_true", help="禁用目标跟踪")
     p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
     p.set_defaults(func=cmd_video_process)
 

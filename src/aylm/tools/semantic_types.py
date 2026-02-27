@@ -61,6 +61,8 @@ class Detection2D:
     class_id: int  # COCO 类别 ID
     confidence: float  # 置信度
     semantic_label: SemanticLabel  # 语义标签
+    track_id: Optional[int] = None  # 跟踪 ID（跨帧关联）
+    frame_id: Optional[int] = None  # 帧 ID（时序关联）
 
     @property
     def area(self) -> float:

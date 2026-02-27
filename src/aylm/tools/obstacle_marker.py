@@ -74,6 +74,11 @@ class ObstacleBox3D:
     label: SemanticLabel  # 语义标签
     confidence: float  # 平均置信度
     point_indices: NDArray[np.int64] = field(repr=False)  # 属于该障碍物的点索引
+    track_id: Optional[int] = None  # 跟踪 ID（跨帧关联）
+    frame_id: Optional[int] = None  # 帧 ID（时序关联）
+    timestamp: Optional[float] = None  # 时间戳（秒）
+    velocity: Optional[tuple[float, float, float]] = None  # 速度向量 (vx, vy, vz) m/s
+    motion_vector: Optional[tuple[float, float, float]] = None  # 运动矢量（帧间位移）
 
     @property
     def is_movable(self) -> bool:
@@ -140,7 +145,7 @@ class ObstacleBox3D:
         - center_cv: OpenCV 坐标系 (X右,Y下,Z前)
         - center_robot: 机器人坐标系 (X前,Y左,Z上)
         """
-        return {
+        result = {
             "type": "可运动障碍物" if self.is_movable else "静态障碍物",
             "category": LABEL_DESCRIPTIONS.get(self.label, "未知"),
             "movable": self.is_movable,
@@ -154,6 +159,24 @@ class ObstacleBox3D:
             "_label": self.label.name,
             "_label_id": int(self.label.value),
         }
+
+        # 添加跟踪和时序信息
+        if self.track_id is not None:
+            result["track_id"] = self.track_id
+        if self.frame_id is not None:
+            result["frame_id"] = self.frame_id
+        if self.timestamp is not None:
+            result["timestamp"] = self.timestamp
+
+        # 添加运动信息
+        if self.velocity is not None:
+            result["velocity_cv"] = list(self.velocity)
+            result["velocity_robot"] = list(self._cv_to_robot(self.velocity))
+        if self.motion_vector is not None:
+            result["motion_vector_cv"] = list(self.motion_vector)
+            result["motion_vector_robot"] = list(self._cv_to_robot(self.motion_vector))
+
+        return result
 
     def get_box_vertices(self) -> NDArray[np.float64]:
         """获取边界框的8个顶点，用于可视化。"""
@@ -419,17 +442,28 @@ class ObstacleMarker:
 
         return colors
 
-    def export_to_json(self, obstacles: list[ObstacleBox3D], output_path: Path) -> None:
+    def export_to_json(
+        self,
+        obstacles: list[ObstacleBox3D],
+        output_path: Path,
+        frame_id: Optional[int] = None,
+        timestamp: Optional[float] = None,
+    ) -> None:
         """
         导出障碍物列表为 JSON 格式（用于导航系统）。
 
         Args:
             obstacles: 障碍物列表
             output_path: 输出文件路径
+            frame_id: 帧 ID（可选，用于时序关联）
+            timestamp: 时间戳（可选，秒）
         """
         # 统计可运动和静态障碍物数量
         movable_count = sum(1 for obs in obstacles if obs.is_movable)
         static_count = len(obstacles) - movable_count
+
+        # 统计有跟踪 ID 的障碍物
+        tracked_count = sum(1 for obs in obstacles if obs.track_id is not None)
 
         data = {
             "coordinate_systems": {
@@ -446,8 +480,15 @@ class ObstacleMarker:
             "total_count": len(obstacles),
             "movable_count": movable_count,
             "static_count": static_count,
+            "tracked_count": tracked_count,
             "obstacles": [obs.to_dict() for obs in obstacles],
         }
+
+        # 添加时序元数据
+        if frame_id is not None:
+            data["frame_id"] = frame_id
+        if timestamp is not None:
+            data["timestamp"] = timestamp
 
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)

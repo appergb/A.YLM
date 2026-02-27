@@ -1,10 +1,11 @@
 """视频处理流水线模块。
 
-实现帧提取与处理的并行流水线：帧提取、SHARP推理、体素化、语义融合。
+实现帧提取与处理的并行流水线：帧提取、SHARP推理、体素化、语义融合、目标跟踪。
 """
 
 import contextlib
 import gc
+import json
 import logging
 import queue
 import threading
@@ -12,9 +13,13 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
+import numpy as np
 import torch
 
+from .motion_estimator import MotionEstimator
+from .object_tracker import MultiObjectTracker, TrackedObject, TrackerConfig
 from .pointcloud_voxelizer import PointCloudVoxelizer, VoxelizerConfig
 from .video_config import load_or_create_config
 from .video_extractor import VideoExtractor
@@ -59,6 +64,14 @@ class VideoPipelineConfig:
     # 输入分辨率配置
     # 注意：SHARP 模型要求固定 1536，因为内部金字塔结构依赖 1536→768→384
     internal_resolution: int = 1536  # 内部处理分辨率（固定值，不可更改）
+    # 目标跟踪配置
+    enable_tracking: bool = True  # 是否启用目标跟踪
+    tracker_max_age: int = 30  # 轨迹最大存活帧数
+    tracker_min_hits: int = 3  # 轨迹确认所需最小匹配次数
+    tracker_iou_threshold: float = 0.3  # IoU 匹配阈值
+    # 运动估计配置
+    motion_fps: float = 30.0  # 帧率（用于运动估计）
+    motion_stationary_threshold: float = 0.1  # 静止判定阈值（m/s）
 
 
 class VideoPipelineProcessor:
@@ -80,6 +93,8 @@ class VideoPipelineProcessor:
         self._model_loaded = False
         self._voxelizer: PointCloudVoxelizer | None = None
         self._detector = None  # YOLO 语义检测器
+        self._tracker: Optional[MultiObjectTracker] = None  # 目标跟踪器
+        self._motion_estimator: Optional[MotionEstimator] = None  # 运动估计器
         self._frame_queue: queue.Queue[FrameInfo] = queue.Queue(
             maxsize=self.config.frame_queue_size
         )
@@ -186,6 +201,36 @@ class VideoPipelineProcessor:
             del self._detector
             self._detector = None
 
+    def _load_tracker(self):
+        """加载目标跟踪器和运动估计器。"""
+        logger.info("Initializing object tracker and motion estimator...")
+        tracker_config = TrackerConfig(
+            max_age=self.config.tracker_max_age,
+            min_hits=self.config.tracker_min_hits,
+            iou_threshold=self.config.tracker_iou_threshold,
+        )
+        self._tracker = MultiObjectTracker(config=tracker_config)
+        self._motion_estimator = MotionEstimator(
+            fps=self.config.motion_fps,
+            stationary_threshold=self.config.motion_stationary_threshold,
+        )
+        logger.info(
+            f"Tracker initialized (max_age={self.config.tracker_max_age}, "
+            f"min_hits={self.config.tracker_min_hits})"
+        )
+
+    def _cleanup_tracker(self):
+        """清理跟踪器和运动估计器。"""
+        if self._tracker is not None:
+            logger.info("Cleaning up tracker...")
+            self._tracker.reset()
+            del self._tracker
+            self._tracker = None
+        if self._motion_estimator is not None:
+            self._motion_estimator.clear()
+            del self._motion_estimator
+            self._motion_estimator = None
+
     def _apply_slice(self, ply_path: Path, frame_stem: str) -> Path | None:
         """对点云执行半径切片，只保留摄像机附近的点。
 
@@ -253,8 +298,10 @@ class VideoPipelineProcessor:
         detections_dir: Path,
         navigation_dir: Path | None = None,
         focal_length: float | None = None,
+        frame_id: int = 0,
+        timestamp: float = 0.0,
     ) -> None:
-        """对体素化后的点云应用语义融合。
+        """对体素化后的点云应用语义融合和目标跟踪。
 
         Args:
             frame_path: 原始帧图像路径
@@ -262,9 +309,10 @@ class VideoPipelineProcessor:
             detections_dir: 检测结果图片保存目录
             navigation_dir: 导航用点云输出目录（机器人坐标系）
             focal_length: SHARP 推理时使用的焦距（像素），如果为 None 则估算
+            frame_id: 帧 ID（用于跟踪）
+            timestamp: 时间戳（秒，用于运动估计）
         """
         import cv2
-        import numpy as np
 
         from aylm.tools.semantic_fusion import FusionConfig, SemanticFusion
         from aylm.tools.semantic_types import CameraIntrinsics
@@ -299,6 +347,15 @@ class VideoPipelineProcessor:
                     image, detections, detection_image_path, draw_masks=True
                 )
                 logger.debug(f"Detection image saved: {detection_image_path.name}")
+
+            # 目标跟踪（如果启用）
+            tracked_objects: list[TrackedObject] = []
+            if self.config.enable_tracking and self._tracker is not None:
+                tracked_objects = self._tracker.update(detections, frame_id)
+                logger.info(
+                    f"Tracking: {len(tracked_objects)} confirmed tracks "
+                    f"(total: {self._tracker.track_count})"
+                )
 
             if not detections:
                 logger.debug("No detections, skipping semantic fusion")
@@ -369,11 +426,22 @@ class VideoPipelineProcessor:
                 intrinsics=intrinsics,
             )
 
+            # 计算运动信息并导出带跟踪信息的 JSON
             if obstacles:
                 json_path = (
                     voxel_ply_path.parent / f"{voxel_ply_path.stem}_obstacles.json"
                 )
-                marker.export_to_json(obstacles, json_path)
+                self._export_obstacles_with_tracking(
+                    obstacles=obstacles,
+                    tracked_objects=tracked_objects,
+                    detections=detections,
+                    points=points,
+                    intrinsics=intrinsics,
+                    image_shape=(height, width),
+                    frame_id=frame_id,
+                    timestamp=timestamp,
+                    output_path=json_path,
+                )
                 logger.debug(f"Obstacles exported: {json_path.name}")
 
             # 输出导航用点云（机器人坐标系）
@@ -385,6 +453,152 @@ class VideoPipelineProcessor:
         except Exception as e:
             logger.warning(f"Semantic fusion failed: {e}")
             logger.exception(f"Semantic fusion error - {frame_path.name}")
+
+    def _export_obstacles_with_tracking(
+        self,
+        obstacles: list,
+        tracked_objects: list[TrackedObject],
+        detections: list,
+        points: np.ndarray,
+        intrinsics,
+        image_shape: tuple[int, int],
+        frame_id: int,
+        timestamp: float,
+        output_path: Path,
+    ) -> None:
+        """导出带跟踪和运动信息的障碍物 JSON。
+
+        Args:
+            obstacles: 障碍物列表
+            tracked_objects: 跟踪对象列表
+            detections: 检测结果列表
+            points: 3D 点云
+            intrinsics: 相机内参
+            image_shape: 图像尺寸 (height, width)
+            frame_id: 帧 ID
+            timestamp: 时间戳
+            output_path: 输出路径
+        """
+        from aylm.tools.coordinate_utils import opencv_to_robot
+        from aylm.tools.obstacle_marker import MOVABLE_LABELS
+
+        # 建立检测到跟踪对象的映射（基于 IoU）
+        det_to_track: dict[int, TrackedObject] = {}
+        if tracked_objects:
+            for det_idx, det in enumerate(detections):
+                best_iou = 0.0
+                best_track = None
+                for track in tracked_objects:
+                    iou = self._compute_iou(det.bbox, track.bbox)
+                    if iou > best_iou and iou > 0.3:
+                        best_iou = iou
+                        best_track = track
+                if best_track is not None:
+                    det_to_track[det_idx] = best_track
+
+        # 构建带运动信息的障碍物数据
+        obstacles_data = []
+        for obs_idx, obs in enumerate(obstacles):
+            obs_dict = obs.to_dict()
+
+            # 查找对应的跟踪对象
+            track = det_to_track.get(obs_idx)
+            if track is not None:
+                obs_dict["track_id"] = track.track_id
+                obs_dict["track_age"] = track.age
+                obs_dict["track_hits"] = track.hits
+
+                # 计算 3D 中心点并更新运动估计
+                center_cv = np.array(obs.center, dtype=np.float32)
+                if self._motion_estimator is not None:
+                    motion = self._motion_estimator.update(
+                        track_id=track.track_id,
+                        position_cv=center_cv,
+                        frame_id=frame_id,
+                        timestamp=timestamp,
+                    )
+                    if motion is not None:
+                        obs_dict["motion"] = {
+                            "velocity_cv": motion.velocity_cv.tolist(),
+                            "velocity_robot": motion.velocity_robot.tolist(),
+                            "speed": motion.speed,
+                            "heading": motion.heading,
+                            "is_stationary": motion.is_stationary,
+                        }
+                        logger.debug(
+                            f"Track {track.track_id}: speed={motion.speed:.2f}m/s, "
+                            f"stationary={motion.is_stationary}"
+                        )
+
+                        # 预测未来位置（1秒后）
+                        predicted_pos = self._motion_estimator.predict(
+                            track.track_id, dt=1.0
+                        )
+                        if predicted_pos is not None:
+                            predicted_robot = opencv_to_robot(predicted_pos)
+                            obs_dict["predicted_position_1s"] = {
+                                "cv": predicted_pos.tolist(),
+                                "robot": predicted_robot.tolist(),
+                            }
+            else:
+                obs_dict["track_id"] = None
+
+            obstacles_data.append(obs_dict)
+
+        # 统计
+        movable_count = sum(1 for obs in obstacles if obs.label in MOVABLE_LABELS)
+        static_count = len(obstacles) - movable_count
+        tracked_count = sum(1 for d in obstacles_data if d.get("track_id") is not None)
+
+        data = {
+            "frame_id": frame_id,
+            "timestamp": timestamp,
+            "coordinate_systems": {
+                "cv": {
+                    "description": "OpenCV/相机坐标系",
+                    "axes": "X右, Y下, Z前",
+                },
+                "robot": {
+                    "description": "机器人/ROS坐标系",
+                    "axes": "X前, Y左, Z上",
+                },
+                "transform": "X_robot=Z_cv, Y_robot=-X_cv, Z_robot=-Y_cv",
+            },
+            "total_count": len(obstacles),
+            "movable_count": movable_count,
+            "static_count": static_count,
+            "tracked_count": tracked_count,
+            "obstacles": obstacles_data,
+        }
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+        logger.info(
+            f"Exported {len(obstacles)} obstacles ({tracked_count} tracked) "
+            f"to {output_path.name}"
+        )
+
+    @staticmethod
+    def _compute_iou(bbox1: np.ndarray, bbox2: np.ndarray) -> float:
+        """计算两个边界框的 IoU。"""
+        x1 = max(bbox1[0], bbox2[0])
+        y1 = max(bbox1[1], bbox2[1])
+        x2 = min(bbox1[2], bbox2[2])
+        y2 = min(bbox1[3], bbox2[3])
+
+        if x2 <= x1 or y2 <= y1:
+            return 0.0
+
+        intersection = (x2 - x1) * (y2 - y1)
+        area1 = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
+        area2 = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
+        union = area1 + area2 - intersection
+
+        if union <= 0:
+            return 0.0
+
+        return float(intersection / union)
 
     def _save_navigation_ply(
         self,
@@ -461,8 +675,9 @@ class VideoPipelineProcessor:
         voxel_output_dir: Path,
         detections_dir: Path | None = None,
         navigation_dir: Path | None = None,
+        frame_id: int = 0,
     ) -> bool:
-        """处理单帧：推理 + 体素化 + 语义融合（可选）。
+        """处理单帧：推理 + 体素化 + 语义融合 + 跟踪（可选）。
 
         Args:
             frame_info: 帧信息
@@ -470,6 +685,7 @@ class VideoPipelineProcessor:
             voxel_output_dir: 体素化输出目录
             detections_dir: 检测结果图片目录
             navigation_dir: 导航用点云输出目录（机器人坐标系）
+            frame_id: 帧 ID（用于跟踪）
 
         Returns:
             是否处理成功
@@ -560,12 +776,20 @@ class VideoPipelineProcessor:
 
             # 语义融合（如果启用）
             if self.config.enable_semantic and self._detector is not None:
+                # 计算时间戳
+                timestamp = (
+                    frame_info.timestamp
+                    if frame_info.timestamp
+                    else (frame_id / self.config.motion_fps)
+                )
                 self._apply_semantic_fusion(
                     frame_path,
                     voxel_path,
                     detections_dir or voxel_output_dir,
                     navigation_dir=navigation_dir,
                     focal_length=f_px,  # 传递 SHARP 的精确焦距
+                    frame_id=frame_id,
+                    timestamp=timestamp,
                 )
 
             return True
@@ -642,6 +866,12 @@ class VideoPipelineProcessor:
         if self.config.enable_semantic:
             self._load_detector()
 
+        # 加载跟踪器（如果启用）
+        if self.config.enable_tracking:
+            self._load_tracker()
+            if self.config.verbose:
+                logger.info("Object tracking: ENABLED")
+
         self._stop_event.clear()
         self._extraction_done.clear()
         self._frame_queue = queue.Queue(maxsize=self.config.frame_queue_size)
@@ -669,6 +899,7 @@ class VideoPipelineProcessor:
                     voxel_dir,
                     detections_dir,
                     navigation_dir,
+                    frame_id=processed_count,
                 )
                 process_time = time.time() - process_start
 
@@ -705,6 +936,7 @@ class VideoPipelineProcessor:
         if self.config.auto_unload:
             self._unload_model()
             self._cleanup_detector()
+            self._cleanup_tracker()
 
         if self.config.verbose:
             logger.info("=" * 50)
@@ -717,6 +949,8 @@ class VideoPipelineProcessor:
             logger.info(f"  FPS: {self.stats.frames_per_second:.2f}")
             if self.config.enable_semantic:
                 logger.info("  Semantic detection: ENABLED")
+            if self.config.enable_tracking:
+                logger.info("  Object tracking: ENABLED")
             if navigation_dir:
                 logger.info(f"  Navigation PLY: {navigation_dir}")
             logger.info("=" * 50)
@@ -728,6 +962,7 @@ class VideoPipelineProcessor:
         self._stop_event.set()
         self._unload_model()
         self._cleanup_detector()
+        self._cleanup_tracker()
         self._voxelizer = None
 
 
@@ -743,6 +978,7 @@ def process_video(
     semantic_model: str = "yolo11n-seg.pt",
     semantic_confidence: float = 0.5,
     output_navigation_ply: bool = True,
+    enable_tracking: bool = True,
 ) -> VideoProcessingStats:
     """便捷函数：处理视频。
 
@@ -758,6 +994,7 @@ def process_video(
         semantic_model: YOLO 模型名称
         semantic_confidence: 检测置信度阈值
         output_navigation_ply: 是否输出导航用点云（机器人坐标系）
+        enable_tracking: 是否启用目标跟踪
 
     Returns:
         VideoProcessingStats: 处理统计
@@ -768,6 +1005,7 @@ def process_video(
         ...     video_path="video.mp4",
         ...     output_dir="output/",
         ...     enable_semantic=True,
+        ...     enable_tracking=True,
         ...     output_navigation_ply=True,
         ... )
         >>> print(f"Processed {stats.total_frames_processed} frames")
@@ -781,6 +1019,7 @@ def process_video(
         semantic_model=semantic_model,
         semantic_confidence=semantic_confidence,
         output_navigation_ply=output_navigation_ply,
+        enable_tracking=enable_tracking,
     )
 
     processor = VideoPipelineProcessor(config)

@@ -62,6 +62,10 @@ ${YELLOW}点云切片选项:${NC}
   --no-slice        禁用点云切片
   --slice-radius    切片半径/米 (默认: 10.0)
 
+${YELLOW}目标跟踪选项:${NC}
+  --track           启用目标跟踪 (默认)
+  --no-track        禁用目标跟踪
+
 ${YELLOW}示例:${NC}
   ./run.sh --setup                    # 初始化
   ./run.sh -i ./images                # 处理图像
@@ -158,9 +162,10 @@ run_auto() {
 main() {
     local action="auto" input_dir="inputs/input_images" output_dir="" config_file=""
     local extra_args=() check_only=false use_gpu=false frame_interval="" fps="10" loop=false
-    # 语义检测和切片参数（默认都启用）
+    # 语义检测、切片和跟踪参数（默认都启用）
     local semantic=true semantic_model="yolo11n-seg.pt" semantic_confidence="0.25"
     local slice=true slice_radius="10.0"
+    local track=true
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -185,6 +190,9 @@ main() {
             --slice) slice=true; shift ;;
             --no-slice) slice=false; shift ;;
             --slice-radius) slice_radius="$2"; shift 2 ;;
+            # 跟踪参数
+            --track) track=true; shift ;;
+            --no-track) track=false; shift ;;
             *) extra_args+=("$1"); shift ;;
         esac
     done
@@ -213,6 +221,13 @@ main() {
         slice_args+=("--no-slice")
     fi
 
+    local track_args=()
+    if [[ "$track" == true ]]; then
+        track_args+=("--track")
+    else
+        track_args+=("--no-track")
+    fi
+
     case "$action" in
         setup) log_step "下载模型..."; python3 -m aylm.cli setup --download ;;
         voxelize) run_voxelize "${extra_args[@]}" ;;
@@ -223,7 +238,7 @@ main() {
             local video_args=("${extra_args[@]}")
             [[ -n "$config_file" ]] && video_args+=("-c" "$config_file")
             [[ "$use_gpu" == true ]] && video_args+=("--use-gpu")
-            video_args+=("${semantic_args[@]}" "${slice_args[@]}")
+            video_args+=("${semantic_args[@]}" "${slice_args[@]}" "${track_args[@]}")
             show_banner "视频处理"
             run_video_process "${video_args[@]}" ;;
         video-extract)
@@ -235,7 +250,7 @@ main() {
             local play_args=("-i" "$input_dir" "--fps" "$fps")
             [[ "$loop" == true ]] && play_args+=("--loop")
             run_video_play "${play_args[@]}" ;;
-        auto) run_auto "$input_dir" "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" ;;
+        auto) run_auto "$input_dir" "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" "${track_args[@]}" ;;
     esac
 
     log_info "完成"

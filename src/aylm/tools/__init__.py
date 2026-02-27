@@ -6,6 +6,13 @@ from .coordinate_utils import (
     transform_for_navigation,
     transform_obstacle_center,
 )
+from .motion_estimator import (
+    KalmanConfig,
+    MotionEstimator,
+    MotionVector,
+    TrackedObject3D,
+    create_tracked_object,
+)
 from .multiframe_fusion import (
     FramePose,
     FusionResult,
@@ -14,6 +21,7 @@ from .multiframe_fusion import (
     RegistrationResult,
 )
 from .object_detector import DetectorConfig, ObjectDetector
+from .object_tracker import MultiObjectTracker, TrackedObject, TrackerConfig
 from .obstacle_marker import (
     ObstacleBox3D,
     ObstacleMarker,
@@ -92,4 +100,14 @@ __all__ = [
     "RegistrationResult",
     "FramePose",
     "FusionResult",
+    # 运动估计
+    "MotionEstimator",
+    "MotionVector",
+    "TrackedObject3D",
+    "KalmanConfig",
+    "create_tracked_object",
+    # 目标跟踪
+    "MultiObjectTracker",
+    "TrackedObject",
+    "TrackerConfig",
 ]
