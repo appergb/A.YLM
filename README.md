@@ -1,87 +1,193 @@
-# A-YLM: A Geometric Safety Supervisor for E2E Driving
+# A-YLM: Geometric Constitutional AI for Embodied Intelligence
+
+<div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![arXiv](https://img.shields.io/badge/arXiv-2026.xxxxx-b31b1b.svg)](https://arxiv.org)
 
-## Abstract
+**Self-Supervised Safety Framework | Autonomous Driving | Robotics | Embodied AI**
 
-A-YLM is a **Geometric Safety Supervisor** for end-to-end autonomous driving systems. Unlike traditional perception frameworks, A-YLM serves as an **external safety validation module** — a "Physical Examiner for AI" that provides independent geometric verification of driving decisions.
+*Extending Anthropic's Constitutional AI paradigm from language to the physical world*
 
-The core philosophy: **AI needs a physical ground truth supervisor**. While end-to-end models excel at pattern recognition, they lack explicit geometric reasoning. A-YLM bridges this gap by constructing real-time 3D geometric representations via **3D Gaussian Splatting (3DGS)** and validating driving decisions against physical reality.
+[Paper](#) | [Documentation](#) | [Demo](#) | [中文文档](docs/paper_aylm_zh.md)
 
-Key capabilities:
-- **Edge-deployed Safety Validation**: Lightweight geometric verification running alongside E2E models
-- **Self-Supervised Safety Learning**: Learns safety boundaries from geometric constraints without manual labeling
-- **Physical Ground Truth**: Provides interpretable 3D spatial understanding as safety reference
-- **AI Self-Evolution**: Continuous improvement through geometric feedback loops
-
-The system pipeline: **Multi-view RGB → 3DGS Reconstruction → Voxelization (Occupancy 2.0) → Safety Validation → Geometric Feedback**.
-
-### Multi-Purpose Foundation Framework
-
-Beyond safety supervision, A-YLM serves as a **versatile foundation framework** for various 3D perception applications:
-
-| Application | Description | Use Case |
-|-------------|-------------|----------|
-| **Safety Supervisor** | Geometric validation for E2E driving | Primary use case |
-| **3D Perception** | Standalone 3D scene understanding | Robotics, AR/VR |
-| **Occupancy Mapping** | Real-time voxel-based environment mapping | Navigation, SLAM |
-| **Semantic Fusion** | 2D-to-3D semantic projection | Scene understanding |
-| **Object Tracking** | Multi-object 3D tracking with motion estimation | Surveillance, analytics |
-
-The modular architecture allows mixing and matching components for custom pipelines.
+</div>
 
 ---
 
-## 1. Core Concept: Physical Examiner for AI
+## Vision: Physical Constitution for AI
 
-### 1.1 The Safety Supervision Problem
+> *"Just as Constitutional AI teaches language models ethical boundaries through textual principles, A-YLM teaches embodied AI systems physical boundaries through geometric constraints."*
 
-End-to-end autonomous driving models face a fundamental challenge: **the black-box problem**. These models make decisions without explicit geometric reasoning, making safety validation difficult.
+A-YLM represents a paradigm shift in AI safety — from **reactive safety checks** to **constitutional safety learning**. We believe that for AI to truly understand and safely navigate the physical world, it needs more than perception; it needs a **geometric constitution** that defines the fundamental laws of physical interaction.
 
-A-YLM addresses this by serving as an **independent safety supervisor**:
+---
+
+## Abstract
+
+A-YLM is a **Geometric Constitutional AI** framework for embodied intelligence systems. Inspired by Anthropic's Constitutional AI approach for language models, A-YLM extends this safety paradigm to the **physical world** — providing geometric constraints as a "Physical Constitution" that governs AI behavior in 3D space.
+
+The core philosophy: **AI needs physical laws, not just language rules**. While Constitutional AI teaches language models ethical boundaries through textual principles, A-YLM teaches embodied AI systems physical boundaries through geometric constraints. This enables AI to **understand the world** through self-supervised learning from massive geometric data.
+
+### Key Innovations
+
+| Concept | Language AI (Constitutional AI) | Embodied AI (A-YLM) |
+|---------|--------------------------------|---------------------|
+| **Constitution** | Ethical principles in text | Geometric constraints in 3D |
+| **Supervision** | RLHF with human feedback | Self-supervised geometric validation |
+| **Learning** | Learn from text corrections | Learn from physical violations |
+| **Safety** | Prevent harmful outputs | Prevent unsafe physical actions |
+| **Evolution** | Iterative refinement | Continuous geometric feedback |
+
+### Core Capabilities
+
+- **Geometric Constitutional Supervision**: Physical laws as AI behavior boundaries
+- **Self-Supervised World Understanding**: AI learns physics through geometric feedback — no human labeling required
+- **Embodied Intelligence Training**: Continuous self-evolution from massive 3D data
+- **Universal Applicability**: Not just autonomous driving — all embodied AI systems (robotics, drones, AR/VR, humanoids)
+- **Edge-Deployable**: Real-time geometric supervision on resource-constrained devices
+
+The system pipeline: **Sensor Input → 3DGS Reconstruction → Voxelization → Constitutional Validation → Geometric Feedback → Self-Learning**.
+
+---
+
+## Why Geometric Constitutional AI?
+
+### The Problem with Current AI Safety
+
+Current embodied AI systems face a fundamental challenge:
+
+| Approach | Limitation |
+|----------|------------|
+| **Rule-based Safety** | Cannot generalize to novel situations |
+| **Learned Safety** | Requires massive human-labeled data |
+| **End-to-End Models** | Black-box decisions, uninterpretable |
+| **Simulation-based** | Sim-to-real gap, limited coverage |
+
+### Our Solution: Physical Constitution
+
+A-YLM introduces **Geometric Constitutional AI** — a self-supervised framework where:
+
+1. **Physical laws become the constitution**: Geometric constraints (collision avoidance, spatial boundaries) serve as inviolable principles
+2. **AI learns from violations**: When AI decisions violate geometric constraints, the system generates training signals automatically
+3. **No human labeling needed**: The physical world itself provides ground truth
+4. **Continuous evolution**: AI improves its world understanding through every interaction
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    A-YLM: Geometric Safety Supervisor                       │
+│                    Geometric Constitutional AI Loop                         │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│   ┌──────────────┐                              ┌──────────────────────┐   │
-│   │   E2E Model  │──── Driving Decision ────▶  │   Safety Validator   │   │
-│   │  (Black Box) │                              │  (Geometric Check)   │   │
-│   └──────────────┘                              └──────────────────────┘   │
-│          │                                               │                  │
-│          │                                               ▼                  │
-│          │                                      ┌──────────────────────┐   │
-│          │                                      │   Physical Ground    │   │
-│          │                                      │       Truth          │   │
-│          │                                      │   (3DGS + Voxels)    │   │
-│          │                                      └──────────────────────┘   │
-│          │                                               │                  │
-│          ▼                                               ▼                  │
-│   ┌──────────────────────────────────────────────────────────────────────┐ │
-│   │                     Safety Decision Gate                              │ │
-│   │   • Validate against geometric constraints                           │ │
-│   │   • Override unsafe decisions                                        │ │
-│   │   • Provide safety feedback for learning                             │ │
-│   └──────────────────────────────────────────────────────────────────────┘ │
+│    ┌─────────────┐         ┌─────────────┐         ┌─────────────┐         │
+│    │   AI        │ ──────▶ │  Geometric  │ ──────▶ │  Physical   │         │
+│    │   Decision  │         │  Validation │         │  Execution  │         │
+│    └─────────────┘         └─────────────┘         └─────────────┘         │
+│           ▲                       │                       │                 │
+│           │                       │ Violation?            │                 │
+│           │                       ▼                       │                 │
+│    ┌─────────────┐         ┌─────────────┐               │                 │
+│    │   World     │ ◀────── │  Feedback   │ ◀─────────────┘                 │
+│    │   Model     │         │  Generation │   Physical Outcome              │
+│    │   Update    │         └─────────────┘                                 │
+│    └─────────────┘                                                         │
+│           │                                                                 │
+│           └──────────────── Self-Evolution ────────────────────────────────│
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1.2 Self-Supervised Safety Learning
+---
 
-A-YLM implements **self-supervised safety learning** through geometric constraints:
+## 1. Geometric Constitutional AI: A New Safety Paradigm
 
-1. **Geometric Constraint Extraction**: 3DGS provides explicit 3D structure
-2. **Safety Boundary Learning**: Learn safe operating regions from physical geometry
-3. **Feedback Loop**: Geometric violations trigger safety interventions and learning updates
+### 1.1 From Language Constitution to Physical Constitution
+
+Anthropic's Constitutional AI revolutionized language model safety by embedding ethical principles directly into the training process. A-YLM extends this paradigm to **embodied intelligence**:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              Constitutional AI Paradigm Comparison                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Language AI (Anthropic)              Embodied AI (A-YLM)                  │
+│   ┌─────────────────────┐              ┌─────────────────────┐              │
+│   │  Text Constitution  │              │ Geometric Constitution│             │
+│   │  "Be helpful,       │              │ "Respect physical    │             │
+│   │   harmless, honest" │              │  boundaries, avoid   │             │
+│   └─────────────────────┘              │  collisions, obey    │             │
+│            │                           │  spatial constraints"│             │
+│            ▼                           └─────────────────────┘              │
+│   ┌─────────────────────┐                       │                           │
+│   │   RLHF Training     │                       ▼                           │
+│   │   (Human Feedback)  │              ┌─────────────────────┐              │
+│   └─────────────────────┘              │  Self-Supervised    │              │
+│            │                           │  Geometric Learning │              │
+│            ▼                           └─────────────────────┘              │
+│   ┌─────────────────────┐                       │                           │
+│   │   Safe Language     │                       ▼                           │
+│   │   Outputs           │              ┌─────────────────────┐              │
+│   └─────────────────────┘              │  Safe Physical      │              │
+│                                        │  Actions            │              │
+│                                        └─────────────────────┘              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 1.2 Self-Supervised World Understanding (Embodied Intelligence)
+
+A-YLM enables AI to **understand the physical world** through continuous geometric learning — the essence of **embodied intelligence**:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Self-Supervised World Understanding                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Stage 1: Geometric Data Collection                                        │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │  Camera → 3DGS Reconstruction → Voxel Grid → Physical Ground Truth  │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│   Stage 2: Constitutional Validation                                        │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │  AI Decision → Geometric Check → Collision? Boundary? TTC?          │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│   Stage 3: Violation Detection & Feedback                                   │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │  Violation Detected → Generate Training Signal → Update World Model │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│   Stage 4: AI Self-Evolution                                                │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │  Improved World Understanding → Better Decisions → Safer Actions    │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+This creates a **self-improving loop** where AI learns physics without human labeling — true embodied intelligence.
+
+### 1.3 Universal Embodied Intelligence Applications
+
+While autonomous driving is our primary demonstration, A-YLM's geometric constitutional approach applies to **all embodied AI**:
+
+| Domain | Application | Geometric Constitution | Self-Learning Signal |
+|--------|-------------|------------------------|----------------------|
+| **Autonomous Driving** | Vehicle safety | Collision avoidance, lane boundaries | Near-miss detection |
+| **Robotics** | Manipulation safety | Workspace limits, force constraints | Contact detection |
+| **Drones/UAV** | Flight safety | Obstacle avoidance, no-fly zones | Proximity alerts |
+| **AR/VR** | Spatial interaction | Physical object boundaries | Occlusion conflicts |
+| **Humanoid Robots** | Navigation safety | Human proximity, obstacle clearance | Social distance violations |
+| **Industrial Automation** | Workspace safety | Equipment boundaries, safety zones | Zone intrusion |
 
 ---
 
 ## 2. Technical Architecture
 
-### 2.1 Safety Validation Pipeline
+### 2.1 Geometric Safety Supervisor
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -518,17 +624,40 @@ If you use A-YLM in your research, please cite:
 
 ```bibtex
 @software{aylm2026,
-  title={A-YLM: A Geometric Safety Supervisor for End-to-End Autonomous Driving},
+  title={A-YLM: Geometric Constitutional AI for Embodied Intelligence},
   author={TRIP (appergb)},
   year={2026},
-  url={https://github.com/appergb/A.YLM}
+  url={https://github.com/appergb/A.YLM},
+  note={Self-supervised safety framework extending Constitutional AI to physical world}
 }
 ```
 
 ---
 
-**Author**: TRIP (appergb)
+## Acknowledgments
 
-**Contributors**: Claude Code, Junie
+- **Anthropic** - Constitutional AI paradigm that inspired this work
+- **Apple Inc.** - SHARP Vision Transformer model and research
+- **Ultralytics** - YOLO object detection framework
+- **Open3D Community** - Point cloud processing library
+- **PyTorch Team** - Deep learning framework
 
-**Project Status**: Production Ready
+---
+
+## Contact & Community
+
+- **Author**: TRIP (appergb)
+- **Contributors**: Claude Code, Junie
+- **Project Status**: Production Ready
+- **Issues**: [GitHub Issues](https://github.com/appergb/A.YLM/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/appergb/A.YLM/discussions)
+
+---
+
+<div align="center">
+
+**Star us on GitHub if you find this project useful!**
+
+*A-YLM: Teaching AI to understand the physical world through geometric constitution*
+
+</div>
