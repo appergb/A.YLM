@@ -65,14 +65,129 @@ Current embodied AI systems face a fundamental challenge:
 | **End-to-End Models** | Black-box decisions, uninterpretable |
 | **Simulation-based** | Sim-to-real gap, limited coverage |
 
-### Our Solution: Physical Constitution
+### Our Solution: Bidirectional Fusion with E2E Systems
 
-A-YLM introduces **Geometric Constitutional AI** — a self-supervised framework where:
+A-YLM introduces **Geometric Constitutional AI** with **bidirectional fusion** — fully compatible with existing end-to-end driving systems (Tesla FSD, Huawei ADS, etc.):
 
-1. **Physical laws become the constitution**: Geometric constraints (collision avoidance, spatial boundaries) serve as inviolable principles
-2. **AI learns from violations**: When AI decisions violate geometric constraints, the system generates training signals automatically
-3. **No human labeling needed**: The physical world itself provides ground truth
-4. **Continuous evolution**: AI improves its world understanding through every interaction
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Bidirectional Fusion Architecture                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                    End-to-End Driving AI (FSD/ADS)                   │   │
+│   │   ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐     │   │
+│   │   │  Video   │───▶│  Neural  │───▶│ Decision │───▶│  Control │     │   │
+│   │   │  Input   │    │  Network │    │  Output  │    │  Signal  │     │   │
+│   │   └──────────┘    └────┬─────┘    └────┬─────┘    └──────────┘     │   │
+│   │                        │               │                            │   │
+│   │                        │ 3D Input      │ Decision                   │   │
+│   │                        ▼               ▼                            │   │
+│   └────────────────────────┼───────────────┼────────────────────────────┘   │
+│                            │               │                                │
+│   ┌────────────────────────┼───────────────┼────────────────────────────┐   │
+│   │                    A-YLM Edge Module (Lightweight)                   │   │
+│   │                        │               │                            │   │
+│   │   ┌──────────┐    ┌────▼─────┐    ┌────▼─────┐    ┌──────────┐     │   │
+│   │   │  Camera  │───▶│  3D GS   │───▶│  Safety  │───▶│ Training │     │   │
+│   │   │  Input   │    │  Recon   │    │  Scoring │    │  Signal  │     │   │
+│   │   └──────────┘    └────┬─────┘    └──────────┘    └──────────┘     │   │
+│   │                        │                                            │   │
+│   │                        │ Point Cloud + Color                        │   │
+│   │                        ▼                                            │   │
+│   │               ┌──────────────┐                                      │   │
+│   │               │  3D Scene    │ ──▶ Available for E2E AI Input       │   │
+│   │               │  with Color  │                                      │   │
+│   │               └──────────────┘                                      │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Direction 1: Safety Supervision (A-YLM → E2E AI)**
+- A-YLM monitors and validates E2E AI decisions in real-time
+- Provides safety scores and violation labels
+- Generates training signals for AI self-improvement (no human labeling)
+
+**Direction 2: 3D Input Enhancement (A-YLM → E2E AI)**
+- A-YLM provides 3D point cloud as additional input to E2E AI
+- Includes color information from 3D Gaussian Splatting
+- Enables E2E AI to perceive 3D geometry directly
+- Fully compatible with existing video-based E2E architectures
+
+**Key Advantages:**
+1. **Full Compatibility**: Works with existing E2E systems (FSD, ADS) without modification
+2. **Enhanced Perception**: E2E AI gains 3D geometric understanding
+3. **Local Safety Guarantee**: Edge module provides real-time safety validation
+4. **Lightweight & Edge-Optimized**: Runs on Jetson, Apple MPS, and other edge devices
+5. **Self-Supervised Learning**: AI evolves through geometric feedback, no human annotation needed
+
+### Local Safety Decision Module
+
+A-YLM provides a **standalone local safety decision module** that can be called as an independent component:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    A-YLM Local Safety Decision Module                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Input: Camera Frame                                                       │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐            │
+│   │  Camera  │───▶│  3D GS   │───▶│  Point   │───▶│  Depth   │            │
+│   │  Frame   │    │  Recon   │    │  Cloud   │    │  Info    │            │
+│   └──────────┘    └──────────┘    └──────────┘    └──────────┘            │
+│                                                         │                   │
+│                                                         ▼                   │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                    Safety Scoring Module (Our Contribution)          │  │
+│   │   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐              │  │
+│   │   │  Collision   │  │     TTC      │  │   Boundary   │              │  │
+│   │   │   Detection  │  │  Calculation │  │  Validation  │              │  │
+│   │   └──────┬───────┘  └──────┬───────┘  └──────┬───────┘              │  │
+│   │          │                 │                 │                       │  │
+│   │          └─────────────────┼─────────────────┘                       │  │
+│   │                            ▼                                         │  │
+│   │                   ┌──────────────┐                                   │  │
+│   │                   │ Safety Score │ ──▶ 0.0 (Dangerous) ~ 1.0 (Safe) │  │
+│   │                   └──────────────┘                                   │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                                                         │                   │
+│   Output:                                               ▼                   │
+│   ┌──────────────────────────────────────────────────────────────────────┐ │
+│   │  - Safety Score (0.0 ~ 1.0)                                          │ │
+│   │  - Violation Labels (collision, ttc_warning, boundary)               │ │
+│   │  - 3D Obstacle Positions with Depth                                  │ │
+│   │  - Recommended Action (safe/warning/emergency_stop)                  │ │
+│   │  - Training Signal for Cloud AI                                      │ │
+│   └──────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Module Features:**
+- **3D Decision Making**: With point cloud and depth information, enables 3D-based safety decisions locally
+- **Safety Scoring**: Our proposed scoring module evaluates AI decisions against geometric constraints
+- **Modular Design**: Can be called as an independent module by any system
+- **Real-time**: Optimized for edge deployment with <50ms latency
+- **API-Ready**: Simple Python API for integration
+
+```python
+# Example: Using A-YLM as a safety module
+from aylm.safety import SafetyModule
+
+safety = SafetyModule()
+
+# Get safety score for an AI decision
+result = safety.evaluate(
+    camera_frame=frame,
+    ai_decision={"steering": 0.1, "acceleration": 0.5}
+)
+
+print(f"Safety Score: {result.score}")  # 0.0 ~ 1.0
+print(f"Violations: {result.violations}")  # ['ttc_warning']
+print(f"Recommended: {result.action}")  # 'reduce_speed'
+print(f"Training Signal: {result.training_label}")  # For cloud AI
+```
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
