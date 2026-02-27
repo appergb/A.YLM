@@ -1,25 +1,91 @@
-# A.YLM: Hybrid End-to-End Autonomous Driving Perception via 3D Gaussian Splatting
+# A-YLM: A Geometric Safety Supervisor for E2E Driving
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 
 ## Abstract
 
-A.YLM presents a novel hybrid end-to-end perception framework for autonomous driving that addresses the "black-box problem" inherent in conventional end-to-end models. By introducing **3D Gaussian Splatting (3DGS)** as an intermediate representation and transforming it into **Occupancy 2.0** voxel grids, our approach achieves interpretable spatial understanding while maintaining computational efficiency suitable for edge deployment.
+A-YLM is a **Geometric Safety Supervisor** for end-to-end autonomous driving systems. Unlike traditional perception frameworks, A-YLM serves as an **external safety validation module** — a "Physical Examiner for AI" that provides independent geometric verification of driving decisions.
 
-The system pipeline follows: **Multi-view RGB → 3DGS Reconstruction → Voxelization (Occupancy 2.0) → 2D Detection with 3D Projection & Tracking → Structured Spatial Data (Position, Velocity, TTC)**.
+The core philosophy: **AI needs a physical ground truth supervisor**. While end-to-end models excel at pattern recognition, they lack explicit geometric reasoning. A-YLM bridges this gap by constructing real-time 3D geometric representations via **3D Gaussian Splatting (3DGS)** and validating driving decisions against physical reality.
 
-Key contributions include: (1) a transparent intermediate representation that bridges the gap between raw sensor input and decision-making, (2) dimensionality reduction through voxelization enabling real-time vehicle-side inference, (3) integration of Apple's SHARP Vision Transformer for efficient single-image 3D reconstruction, and (4) multi-object tracking with motion vector estimation via ByteTrack and Kalman filtering.
+Key capabilities:
+- **Edge-deployed Safety Validation**: Lightweight geometric verification running alongside E2E models
+- **Self-Supervised Safety Learning**: Learns safety boundaries from geometric constraints without manual labeling
+- **Physical Ground Truth**: Provides interpretable 3D spatial understanding as safety reference
+- **AI Self-Evolution**: Continuous improvement through geometric feedback loops
+
+The system pipeline: **Multi-view RGB → 3DGS Reconstruction → Voxelization (Occupancy 2.0) → Safety Validation → Geometric Feedback**.
+
+### Multi-Purpose Foundation Framework
+
+Beyond safety supervision, A-YLM serves as a **versatile foundation framework** for various 3D perception applications:
+
+| Application | Description | Use Case |
+|-------------|-------------|----------|
+| **Safety Supervisor** | Geometric validation for E2E driving | Primary use case |
+| **3D Perception** | Standalone 3D scene understanding | Robotics, AR/VR |
+| **Occupancy Mapping** | Real-time voxel-based environment mapping | Navigation, SLAM |
+| **Semantic Fusion** | 2D-to-3D semantic projection | Scene understanding |
+| **Object Tracking** | Multi-object 3D tracking with motion estimation | Surveillance, analytics |
+
+The modular architecture allows mixing and matching components for custom pipelines.
 
 ---
 
-## 1. Technical Architecture
+## 1. Core Concept: Physical Examiner for AI
 
-### 1.1 System Overview
+### 1.1 The Safety Supervision Problem
+
+End-to-end autonomous driving models face a fundamental challenge: **the black-box problem**. These models make decisions without explicit geometric reasoning, making safety validation difficult.
+
+A-YLM addresses this by serving as an **independent safety supervisor**:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                        A.YLM Perception Pipeline                            │
+│                    A-YLM: Geometric Safety Supervisor                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ┌──────────────┐                              ┌──────────────────────┐   │
+│   │   E2E Model  │──── Driving Decision ────▶  │   Safety Validator   │   │
+│   │  (Black Box) │                              │  (Geometric Check)   │   │
+│   └──────────────┘                              └──────────────────────┘   │
+│          │                                               │                  │
+│          │                                               ▼                  │
+│          │                                      ┌──────────────────────┐   │
+│          │                                      │   Physical Ground    │   │
+│          │                                      │       Truth          │   │
+│          │                                      │   (3DGS + Voxels)    │   │
+│          │                                      └──────────────────────┘   │
+│          │                                               │                  │
+│          ▼                                               ▼                  │
+│   ┌──────────────────────────────────────────────────────────────────────┐ │
+│   │                     Safety Decision Gate                              │ │
+│   │   • Validate against geometric constraints                           │ │
+│   │   • Override unsafe decisions                                        │ │
+│   │   • Provide safety feedback for learning                             │ │
+│   └──────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 1.2 Self-Supervised Safety Learning
+
+A-YLM implements **self-supervised safety learning** through geometric constraints:
+
+1. **Geometric Constraint Extraction**: 3DGS provides explicit 3D structure
+2. **Safety Boundary Learning**: Learn safe operating regions from physical geometry
+3. **Feedback Loop**: Geometric violations trigger safety interventions and learning updates
+
+---
+
+## 2. Technical Architecture
+
+### 2.1 Safety Validation Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        A-YLM Safety Validation Pipeline                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │   ┌──────────┐    ┌──────────────┐    ┌─────────────┐    ┌──────────────┐  │
@@ -31,109 +97,82 @@ Key contributions include: (1) a transparent intermediate representation that br
 │                                                                  │          │
 │                                                                  ▼          │
 │   ┌──────────────────────────────────────────────────────────────────────┐  │
-│   │                    Navigation Output Module                          │  │
+│   │                    Safety Validation Module                          │  │
 │   │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │  │
-│   │  │  Obstacle   │  │  ByteTrack  │  │   Kalman    │  │  Structured │  │  │
-│   │  │  Clustering │  │    MOT      │  │   Filter    │  │  JSON/PLY   │  │  │
-│   │  │  (DBSCAN)   │  │             │  │  (Velocity) │  │   Output    │  │  │
+│   │  │  Obstacle   │  │  Collision  │  │   Safety    │  │  Geometric  │  │  │
+│   │  │  Detection  │  │  Prediction │  │  Boundary   │  │  Feedback   │  │  │
+│   │  │  (DBSCAN)   │  │   (TTC)     │  │  Validation │  │   Output    │  │  │
 │   │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘  │  │
 │   └──────────────────────────────────────────────────────────────────────┘  │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1.2 Processing Pipeline
+### 2.2 Processing Stages
 
-| Stage | Module | Input | Output | Key Algorithm |
-|-------|--------|-------|--------|---------------|
-| 1 | 3D Reconstruction | RGB Image | 3D Gaussian Splatting | Apple SHARP (ViT) |
-| 2 | Voxelization | 3DGS Point Cloud | Occupancy Grid | Spatial Hashing |
-| 3 | Ground Removal | Voxel Grid | Filtered Grid | RANSAC Plane Fitting |
-| 4 | Object Detection | RGB Image | 2D Bounding Boxes | YOLO11 Instance Segmentation |
-| 5 | Semantic Fusion | 2D Detections + 3D Points | Labeled Point Cloud | Camera Projection Matrix |
-| 6 | Obstacle Extraction | Semantic Point Cloud | 3D Bounding Boxes | DBSCAN Clustering |
-| 7 | Motion Estimation | Multi-frame Detections | Velocity Vectors | ByteTrack + Kalman Filter |
+| Stage | Module | Input | Output | Purpose |
+|-------|--------|-------|--------|---------|
+| 1 | 3D Reconstruction | RGB Image | 3D Gaussian Splatting | Physical Ground Truth |
+| 2 | Voxelization | 3DGS Point Cloud | Occupancy Grid | Geometric Representation |
+| 3 | Ground Removal | Voxel Grid | Filtered Grid | Obstacle Isolation |
+| 4 | Object Detection | RGB Image | 2D Bounding Boxes | Semantic Understanding |
+| 5 | Semantic Fusion | 2D + 3D | Labeled Point Cloud | Safety Context |
+| 6 | Safety Validation | Semantic 3D | Safety Decisions | Geometric Verification |
+| 7 | Feedback Generation | Validation Results | Learning Signals | Self-Evolution |
 
 ---
 
-## 2. Core Innovations
+## 3. Core Innovations
 
-### 2.1 Intermediate Representation: 3DGS → Voxel Pathway
+### 3.1 Physical Ground Truth via 3DGS
 
-Traditional end-to-end autonomous driving models suffer from the **"black-box problem"** — the decision-making process lacks interpretability, making debugging and safety validation challenging. A.YLM addresses this by introducing an explicit **intermediate representation**:
+The 3DGS representation provides **physical ground truth** for safety validation:
 
 ```
-Raw Sensor Data → 3D Gaussian Splatting → Voxel Occupancy Grid → Decision
+Raw Sensor Data → 3D Gaussian Splatting → Voxel Occupancy Grid → Safety Validation
                         ↑                        ↑
-                   Interpretable            Geometric
-                   3D Structure             Constraint
+                   Physical                 Geometric
+                   Reality                  Constraint
 ```
 
-The 3DGS representation provides:
-- **Geometric Constraint**: Explicit 3D structure enables physics-based reasoning
-- **Interpretability**: Each Gaussian primitive corresponds to observable scene elements
-- **Debugging Capability**: Intermediate outputs can be visualized and validated
+Benefits:
+- **Interpretable**: Each Gaussian corresponds to physical scene elements
+- **Verifiable**: Intermediate outputs can be visualized and validated
+- **Geometric**: Explicit 3D structure enables physics-based safety reasoning
 
-### 2.2 Computational Optimization via Voxelization
+### 3.2 Edge-Deployed Safety Module
 
-The transformation from 3DGS to voxel grid achieves **dimensionality reduction**:
+A-YLM is designed for **edge deployment** alongside E2E models:
 
-| Representation | Data Size (typical) | Inference Complexity |
-|----------------|---------------------|----------------------|
+| Representation | Data Size | Inference Complexity |
+|----------------|-----------|----------------------|
 | Raw 3DGS | ~500K Gaussians | O(n²) rendering |
 | Voxel Grid (5cm) | ~50K voxels | O(n) lookup |
 | Sparse Voxel | ~10K occupied | O(k) where k << n |
 
-This compression enables **real-time vehicle-side deployment** on edge computing platforms while preserving essential spatial information for navigation.
+This compression enables **real-time safety validation** on edge computing platforms.
 
-### 2.3 Apple SHARP Integration
+### 3.3 Self-Supervised Safety Learning
 
-We leverage Apple's **SHARP (Single-image 3D Human And Room Perception)** model, a Vision Transformer-based architecture that achieves:
+The system learns safety boundaries without manual labeling:
 
-- **Single-image 3D reconstruction**: Eliminates multi-view capture requirements
-- **Reduced rendering pressure**: Direct point cloud output vs. iterative NeRF rendering
+1. **Geometric Constraint Mining**: Extract safety rules from 3D structure
+2. **Violation Detection**: Identify when E2E decisions violate geometric constraints
+3. **Feedback Generation**: Produce learning signals for model improvement
+
+### 3.4 Apple SHARP Integration
+
+We leverage Apple's **SHARP** model for efficient 3D reconstruction:
+
+- **Single-image 3D reconstruction**: Eliminates multi-view requirements
 - **Edge-optimized inference**: Designed for Apple Silicon (MPS acceleration)
-
-### 2.4 Multi-Object Tracking with Motion Estimation
-
-The tracking module implements a two-stage approach:
-
-1. **ByteTrack Association**: Robust multi-object tracking handling occlusions
-2. **Kalman Filter State Estimation**: Predicts velocity vectors and Time-To-Collision (TTC)
-
-```python
-# State vector: [x, y, z, vx, vy, vz, ax, ay, az]
-# Observation: [x, y, z] from 3D detection
-# Output: Position, Velocity, Acceleration, TTC
-```
-
-### 2.5 Sparse Voxel Optimization Interface
-
-The architecture reserves interfaces for **Sparse Voxel** optimization:
-
-```python
-class SparseVoxelGrid:
-    """Future optimization: Only store occupied voxels"""
-    def __init__(self, resolution: float = 0.05):
-        self.occupied_voxels: Dict[Tuple[int,int,int], VoxelData]
-        self.spatial_hash: SpatialHashMap
-```
-
-### 2.6 Multi-Sensor Fusion Potential
-
-The voxel-based representation naturally supports **LiDAR fusion**:
-
-```
-Camera Voxels ──┐
-                ├──▶ Fused Occupancy Grid ──▶ Enhanced Robustness
-LiDAR Voxels ───┘
-```
+- **Real-time capable**: Suitable for safety-critical applications
 
 ---
 
-## 3. System Requirements
+## 4. System Requirements
 
-### 3.1 Hardware Requirements
+### 4.1 Hardware Requirements
 
 | Component | Minimum | Recommended |
 |-----------|---------|-------------|
@@ -141,7 +180,7 @@ LiDAR Voxels ───┘
 | GPU | - | CUDA 11.0+ / Apple MPS |
 | Storage | 5GB | 20GB (with models) |
 
-### 3.2 Software Dependencies
+### 4.2 Software Dependencies
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
@@ -153,16 +192,16 @@ LiDAR Voxels ───┘
 
 ---
 
-## 4. Installation
+## 5. Installation
 
-### 4.1 Quick Start
+### 5.1 Quick Start
 
 ```bash
 # Clone repository with submodules
 git clone --recursive https://github.com/appergb/A.YLM.git
 cd A.YLM
 
-# Create virtual environment (Python 3.11 recommended for Open3D compatibility)
+# Create virtual environment (Python 3.11 recommended)
 python3.11 -m venv aylm_env
 source aylm_env/bin/activate
 
@@ -170,11 +209,11 @@ source aylm_env/bin/activate
 pip install -e .
 pip install -e ml-sharp/
 
-# Install full feature set (Open3D + YOLO)
+# Install full feature set
 pip install -e ".[full]"
 ```
 
-### 4.2 Model Setup
+### 5.2 Model Setup
 
 ```bash
 # SHARP model (~2.8GB) - auto-downloads on first use
@@ -186,12 +225,12 @@ python -c "from ultralytics import YOLO; YOLO('yolo11n-seg.pt')"
 
 ---
 
-## 5. Usage
+## 6. Usage
 
-### 5.1 One-Click Execution
+### 6.1 One-Click Execution
 
 ```bash
-# Complete workflow: setup → predict → voxelize → semantic fusion
+# Complete safety validation workflow
 ./run.sh
 
 # Custom input directory
@@ -201,7 +240,7 @@ python -c "from ultralytics import YOLO; YOLO('yolo11n-seg.pt')"
 ./run.sh --pipeline
 ```
 
-### 5.2 CLI Commands
+### 6.2 CLI Commands
 
 ```bash
 # Environment setup and model download
@@ -220,7 +259,7 @@ aylm process -v
 aylm pipeline -i inputs/input_images -o outputs/output_gaussians -v
 ```
 
-### 5.3 Video Processing
+### 6.3 Video Processing
 
 ```bash
 # Frame extraction
@@ -233,7 +272,7 @@ aylm video process -i video.mp4 -o output/ --use-gpu
 aylm video play -i voxels/ --fps 10 --loop
 ```
 
-### 5.4 Python API
+### 6.4 Python API
 
 ```python
 from aylm.tools.pointcloud_voxelizer import PointCloudVoxelizer, VoxelizerConfig
@@ -261,8 +300,8 @@ semantic_pc = fusion.fuse_semantics(
     detections=detections
 )
 
-# Stage 3: Navigation Mesh Generation
-fusion.save_navigation_ply(semantic_pc, "navigation.ply", voxel_size=0.05)
+# Stage 3: Safety Validation Output
+fusion.save_navigation_ply(semantic_pc, "safety_validation.ply", voxel_size=0.05)
 
 # Full Pipeline Processing
 pipeline_config = PipelineConfig(
@@ -279,18 +318,18 @@ results = processor.run_pipeline(
 
 ---
 
-## 6. Output Specification
+## 7. Output Specification
 
-### 6.1 File Formats
+### 7.1 File Formats
 
 | File Pattern | Format | Description |
 |--------------|--------|-------------|
 | `*.ply` | PLY | Raw 3DGS point cloud from SHARP |
 | `vox_*.ply` | PLY | Voxelized point cloud with semantic colors |
-| `nav_*.ply` | PLY | Navigation mesh (5cm solid cubes) |
-| `*_obstacles.json` | JSON | Structured obstacle data for planning |
+| `nav_*.ply` | PLY | Safety validation mesh (5cm solid cubes) |
+| `*_obstacles.json` | JSON | Structured obstacle data for safety validation |
 
-### 6.2 Obstacle JSON Schema
+### 7.2 Safety Validation JSON Schema
 
 ```json
 {
@@ -312,13 +351,19 @@ results = processor.run_pipeline(
       "dimensions": [7.52, 3.36, 2.26],
       "velocity": [2.5, 0.0, 0.1],
       "ttc": 4.2,
-      "confidence": 0.93
+      "confidence": 0.93,
+      "safety_status": "warning"
     }
-  ]
+  ],
+  "safety_summary": {
+    "overall_status": "safe",
+    "collision_risk": 0.15,
+    "geometric_violations": []
+  }
 }
 ```
 
-### 6.3 Semantic Label Taxonomy
+### 7.3 Semantic Label Taxonomy
 
 | Label ID | Category | Color (RGB) | Motion Type |
 |----------|----------|-------------|-------------|
@@ -332,9 +377,9 @@ results = processor.run_pipeline(
 
 ---
 
-## 7. Configuration
+## 8. Configuration
 
-### 7.1 Environment Variables
+### 8.1 Environment Variables
 
 ```bash
 export AYLM_ROOT="/path/to/project"
@@ -343,7 +388,7 @@ export OUTPUT_DIR="/path/to/output"
 export CUDA_VISIBLE_DEVICES="0"  # GPU selection
 ```
 
-### 7.2 Voxelizer Parameters
+### 8.2 Voxelizer Parameters
 
 | Parameter | Default | Range | Description |
 |-----------|---------|-------|-------------|
@@ -352,18 +397,20 @@ export CUDA_VISIBLE_DEVICES="0"  # GPU selection
 | `ransac_distance_threshold` | 0.02 | 0.01-0.1 | RANSAC plane threshold |
 | `ground_normal_threshold` | 0.8 | 0.5-1.0 | Ground normal Y-component |
 
-### 7.3 Pipeline Parameters
+### 8.3 Safety Validation Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `DEFAULT_VOXEL_SIZE` | 0.05 | Navigation voxel size (5cm) |
+| `DEFAULT_VOXEL_SIZE` | 0.05 | Safety validation voxel size (5cm) |
 | `DEFAULT_SLICE_RADIUS` | 20.0 | Processing radius (meters) |
 | `DEFAULT_FOV_DEGREES` | 60.0 | Camera field of view |
 | `DEFAULT_DENSITY_THRESHOLD` | 3 | Minimum points per voxel |
+| `TTC_WARNING_THRESHOLD` | 3.0 | Time-to-collision warning (seconds) |
+| `TTC_CRITICAL_THRESHOLD` | 1.5 | Time-to-collision critical (seconds) |
 
 ---
 
-## 8. Project Structure
+## 9. Project Structure
 
 ```
 A.YLM/
@@ -387,7 +434,7 @@ A.YLM/
 │   ├── output_gaussians/            # 3DGS Point Clouds
 │   ├── voxelized/                   # Occupancy Grids
 │   ├── detections/                  # Detection Results
-│   └── navigation/                  # Navigation Meshes
+│   └── safety_validation/           # Safety Validation Results
 ├── tests/                           # Test Suite
 ├── run.sh                           # One-Click Execution Script
 └── pyproject.toml                   # Project Configuration
@@ -395,25 +442,25 @@ A.YLM/
 
 ---
 
-## 9. Future Work
+## 10. Future Work
 
-### 9.1 Sparse Voxel Optimization
-Implementation of sparse voxel data structures to further reduce memory footprint and enable higher resolution occupancy grids.
+### 10.1 Advanced Safety Learning
+Implementation of reinforcement learning for adaptive safety boundary optimization.
 
-### 9.2 Multi-Sensor Fusion
-Integration with LiDAR point clouds for enhanced depth accuracy and robustness in adverse lighting conditions.
+### 10.2 Multi-Sensor Fusion
+Integration with LiDAR for enhanced geometric accuracy in safety-critical scenarios.
 
-### 9.3 Temporal Consistency
-Incorporation of recurrent architectures (LSTM/Transformer) for improved temporal coherence in video sequences.
+### 10.3 Temporal Safety Reasoning
+Incorporation of temporal models for predictive safety validation.
 
-### 9.4 End-to-End Training
-Joint optimization of the entire pipeline from raw sensor input to navigation output.
+### 10.4 Federated Safety Learning
+Distributed learning across vehicle fleets for collective safety improvement.
 
 ---
 
-## 10. Development
+## 11. Development
 
-### 10.1 Testing
+### 11.1 Testing
 
 ```bash
 # Run full test suite
@@ -426,7 +473,7 @@ pytest --cov=aylm --cov-report=html
 pytest tests/unit/test_semantic_fusion.py -v
 ```
 
-### 10.2 Code Quality
+### 11.2 Code Quality
 
 ```bash
 # Format code
@@ -442,7 +489,7 @@ mypy src/aylm
 
 ---
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
@@ -467,11 +514,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Citation
 
-If you use A.YLM in your research, please cite:
+If you use A-YLM in your research, please cite:
 
 ```bibtex
 @software{aylm2026,
-  title={A.YLM: Hybrid End-to-End Autonomous Driving Perception via 3D Gaussian Splatting},
+  title={A-YLM: A Geometric Safety Supervisor for End-to-End Autonomous Driving},
   author={TRIP (appergb)},
   year={2026},
   url={https://github.com/appergb/A.YLM}
