@@ -336,6 +336,10 @@ def cmd_video_process(args: argparse.Namespace) -> int:
         enable_tracking = getattr(args, "track", True) and not getattr(
             args, "no_track", False
         )
+        # 解析宪法评估选项
+        enable_constitution = getattr(args, "constitution", True) and not getattr(
+            args, "no_constitution", False
+        )
 
         pipeline_config = VideoPipelineConfig(
             video_config=config,
@@ -348,6 +352,14 @@ def cmd_video_process(args: argparse.Namespace) -> int:
             enable_slice=enable_slice,
             slice_radius=getattr(args, "slice_radius", 10.0),
             enable_tracking=enable_tracking,
+            enable_constitution=enable_constitution,
+            constitution_config_path=(
+                Path(args.constitution_config)
+                if getattr(args, "constitution_config", None)
+                else None
+            ),
+            ego_speed=getattr(args, "ego_speed", 0.0),
+            ego_heading=getattr(args, "ego_heading", 0.0),
         )
         stats = VideoPipelineProcessor(pipeline_config).process(video_path, output_dir)
 
@@ -511,6 +523,9 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
     # 解析语义检测和切片选项
     enable_semantic = args.semantic and not getattr(args, "no_semantic", False)
     enable_slice = args.slice and not getattr(args, "no_slice", False)
+    enable_constitution = args.constitution and not getattr(
+        args, "no_constitution", False
+    )
 
     print("\n[配置]")
     print(f"  体素尺寸: {args.voxel_size}m")
@@ -523,6 +538,9 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
     print(f"  点云切片: {'是' if enable_slice else '否'}")
     if enable_slice:
         print(f"    半径: {args.slice_radius}m")
+    print(f"  宪法评估: {'是' if enable_constitution else '否'}")
+    if enable_constitution and args.ego_speed > 0:
+        print(f"    自车速度: {args.ego_speed}m/s")
     print(f"  详细输出: {'是' if verbose else '否'}")
 
     print("\n[流水线策略]")
@@ -548,6 +566,12 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
             semantic_confidence=args.semantic_confidence,
             enable_slice=enable_slice,
             slice_radius=args.slice_radius,
+            enable_constitution=enable_constitution,
+            constitution_config_path=(
+                Path(args.constitution_config) if args.constitution_config else None
+            ),
+            ego_speed=args.ego_speed,
+            ego_heading=args.ego_heading,
         )
         stats = PipelineProcessor(config).process(input_dir, output_dir)
 
@@ -568,6 +592,43 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
         return 1
     except Exception as e:
         logger.error(f"流水线处理失败: {e}")
+        return 1
+
+
+def cmd_demo(args: argparse.Namespace) -> int:
+    """运行宪法评估演示."""
+    try:
+        from aylm.tools.constitution_demo import run_demo
+
+        return run_demo(verbose=args.verbose)
+    except ImportError as e:
+        logger.error(f"导入演示模块失败: {e}")
+        return 1
+    except Exception as e:
+        logger.error(f"演示运行失败: {e}")
+        return 1
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    """启动宪法评估 API 服务."""
+    try:
+        from aylm.api.app import run_server
+
+        run_server(
+            host=args.host,
+            port=args.port,
+            ego_speed=args.ego_speed,
+            ego_heading=args.ego_heading,
+            approval_threshold=args.threshold,
+            config_path=args.constitution_config,
+        )
+        return 0
+    except ImportError as e:
+        logger.error(f"API 依赖缺失: {e}")
+        logger.error("安装: pip install 'aylm[api]'  或  pip install fastapi uvicorn")
+        return 1
+    except Exception as e:
+        logger.error(f"API 服务启动失败: {e}")
         return 1
 
 
@@ -679,6 +740,19 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("--slice", action="store_true", default=True, help="启用点云切片")
     p.add_argument("--no-slice", action="store_true", help="禁用点云切片")
     p.add_argument("--slice-radius", type=float, default=10.0, help="切片半径(米)")
+    # 宪法安全评估选项
+    p.add_argument(
+        "--constitution",
+        action="store_true",
+        default=True,
+        help="启用宪法安全评估（默认开启）",
+    )
+    p.add_argument("--no-constitution", action="store_true", help="禁用宪法安全评估")
+    p.add_argument(
+        "--constitution-config", type=str, help="宪法配置文件路径(YAML/JSON)"
+    )
+    p.add_argument("--ego-speed", type=float, default=0.0, help="自车速度(m/s)")
+    p.add_argument("--ego-heading", type=float, default=0.0, help="自车航向(弧度)")
     p.add_argument(
         "-v",
         "--verbose",
@@ -715,6 +789,19 @@ def create_parser() -> argparse.ArgumentParser:
     # 目标跟踪选项
     p.add_argument("--track", action="store_true", default=True, help="启用目标跟踪")
     p.add_argument("--no-track", action="store_true", help="禁用目标跟踪")
+    # 宪法安全评估选项
+    p.add_argument(
+        "--constitution",
+        action="store_true",
+        default=True,
+        help="启用宪法安全评估（默认开启）",
+    )
+    p.add_argument("--no-constitution", action="store_true", help="禁用宪法安全评估")
+    p.add_argument(
+        "--constitution-config", type=str, help="宪法配置文件路径(YAML/JSON)"
+    )
+    p.add_argument("--ego-speed", type=float, default=0.0, help="自车速度(m/s)")
+    p.add_argument("--ego-heading", type=float, default=0.0, help="自车航向(弧度)")
     p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
     p.set_defaults(func=cmd_video_process)
 
@@ -734,6 +821,25 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("--loop", action="store_true", help="循环播放")
     p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
     p.set_defaults(func=cmd_video_play)
+
+    # demo - 宪法评估演示
+    p = subs.add_parser("demo", help="宪法式 AI 安全评估演示")
+    p.add_argument("-v", "--verbose", action="store_true", help="显示完整 JSON 结果")
+    p.set_defaults(func=cmd_demo)
+
+    # serve - 宪法评估 API 服务
+    p = subs.add_parser("serve", help="启动宪法评估 API 服务")
+    p.add_argument("--host", default="0.0.0.0", help="监听地址(默认0.0.0.0)")
+    p.add_argument("--port", type=int, default=8000, help="监听端口(默认8000)")
+    p.add_argument("--ego-speed", type=float, default=0.0, help="初始自车速度(m/s)")
+    p.add_argument("--ego-heading", type=float, default=0.0, help="初始自车航向(弧度)")
+    p.add_argument(
+        "--threshold", type=float, default=0.6, help="安全分批准阈值(默认0.6)"
+    )
+    p.add_argument(
+        "--constitution-config", type=str, help="宪法配置文件路径(YAML/JSON)"
+    )
+    p.set_defaults(func=cmd_serve)
 
     # fuse - 多帧点云融合
     p = subs.add_parser("fuse", help="多帧点云配准融合")

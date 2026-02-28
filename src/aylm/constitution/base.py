@@ -53,10 +53,10 @@ class ViolationResult:
     def to_dict(self) -> dict[str, Any]:
         """转换为字典格式。"""
         return {
-            "violated": self.violated,
+            "violated": bool(self.violated),
             "severity": self.severity.name,
             "severity_weight": self.severity.value,
-            "confidence": self.confidence,
+            "confidence": float(self.confidence),
             "description": self.description,
             "metrics": self.metrics,
             "correction_hint": self.correction_hint,

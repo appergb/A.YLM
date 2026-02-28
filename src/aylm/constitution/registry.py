@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from .base import ConstitutionPrinciple
+    from .command_parser import CommandParser
     from .scorer import SafetyScorer
     from .training import TrainingSignalGenerator
 
@@ -34,6 +35,7 @@ class ConstitutionRegistry:
     _principles: ClassVar[dict[str, type["ConstitutionPrinciple"]]] = {}
     _scorers: ClassVar[dict[str, type["SafetyScorer"]]] = {}
     _generators: ClassVar[dict[str, type["TrainingSignalGenerator"]]] = {}
+    _command_parsers: ClassVar[dict[str, type["CommandParser"]]] = {}
 
     @classmethod
     def register_principle(cls, name: str):
@@ -93,6 +95,25 @@ class ConstitutionRegistry:
         return decorator
 
     @classmethod
+    def register_command_parser(cls, name: str):
+        """装饰器：注册自定义指令解析器。
+
+        Args:
+            name: 解析器名称
+
+        Example:
+            >>> @ConstitutionRegistry.register_command_parser("ros")
+            ... class ROSCommandParser(CommandParser):
+            ...     pass
+        """
+
+        def decorator(parser_cls: type["CommandParser"]):
+            cls._command_parsers[name] = parser_cls
+            return parser_cls
+
+        return decorator
+
+    @classmethod
     def get_principle(cls, name: str) -> type["ConstitutionPrinciple"] | None:
         """获取已注册的原则类。"""
         return cls._principles.get(name)
@@ -108,6 +129,11 @@ class ConstitutionRegistry:
         return cls._generators.get(name)
 
     @classmethod
+    def get_command_parser(cls, name: str) -> type["CommandParser"] | None:
+        """获取已注册的指令解析器类。"""
+        return cls._command_parsers.get(name)
+
+    @classmethod
     def list_principles(cls) -> list[str]:
         """列出所有已注册的原则名称。"""
         return list(cls._principles.keys())
@@ -121,6 +147,11 @@ class ConstitutionRegistry:
     def list_generators(cls) -> list[str]:
         """列出所有已注册的生成器名称。"""
         return list(cls._generators.keys())
+
+    @classmethod
+    def list_command_parsers(cls) -> list[str]:
+        """列出所有已注册的指令解析器名称。"""
+        return list(cls._command_parsers.keys())
 
     @classmethod
     def create_principle(cls, name: str, **kwargs) -> "ConstitutionPrinciple":
@@ -163,3 +194,4 @@ class ConstitutionRegistry:
         cls._principles.clear()
         cls._scorers.clear()
         cls._generators.clear()
+        cls._command_parsers.clear()

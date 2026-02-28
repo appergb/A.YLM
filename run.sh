@@ -26,6 +26,7 @@ ${CYAN}AYLM v2 - 3D Gaussian Splatting 点云处理工具${NC}
 
 ${YELLOW}处理选项:${NC}
   -h, --help        显示帮助信息
+  --demo            宪法评估演示（无需模型/图像）
   --setup           设置环境并下载模型
   --voxelize        体素化处理
   --predict         预测流程
@@ -66,12 +67,21 @@ ${YELLOW}目标跟踪选项:${NC}
   --track           启用目标跟踪 (默认)
   --no-track        禁用目标跟踪
 
+${YELLOW}宪法安全评估选项:${NC}
+  --no-constitution       禁用宪法安全评估
+  --constitution-config   宪法配置文件路径(YAML/JSON)
+  --ego-speed             自车速度/m/s (默认: 0.0)
+  --ego-heading           自车航向/弧度 (默认: 0.0)
+
 ${YELLOW}示例:${NC}
-  ./run.sh --setup                    # 初始化
+  ./run.sh --demo                       # 宪法评估演示
+  ./run.sh --setup                      # 初始化
   ./run.sh -i ./images                # 处理图像
   ./run.sh --video -i video.mp4       # 处理视频
   ./run.sh --semantic -i ./images     # 启用语义检测
   ./run.sh --slice-radius 5.0         # 设置切片半径
+  ./run.sh --ego-speed 10.0 -i ./images  # 设置自车速度
+  ./run.sh --no-constitution -i ./images # 禁用宪法评估
 EOF
 }
 
@@ -166,11 +176,13 @@ main() {
     local semantic=true semantic_model="yolo11n-seg.pt" semantic_confidence="0.25"
     local slice=true slice_radius="10.0"
     local track=true
+    # 宪法评估参数（默认启用）
+    local constitution=true constitution_config="" ego_speed="0.0" ego_heading="0.0"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help) show_help; exit 0 ;;
-            --setup|--voxelize|--predict|--full|--pipeline|--auto|--video|--video-extract|--video-play)
+            --demo|--setup|--voxelize|--predict|--full|--pipeline|--auto|--video|--video-extract|--video-play)
                 action="${1#--}"; shift ;;
             -i|--input) input_dir="$2"; extra_args+=("-i" "$2"); shift 2 ;;
             -o|--output) output_dir="$2"; extra_args+=("-o" "$2"); shift 2 ;;
@@ -193,6 +205,11 @@ main() {
             # 跟踪参数
             --track) track=true; shift ;;
             --no-track) track=false; shift ;;
+            # 宪法评估参数
+            --no-constitution) constitution=false; shift ;;
+            --constitution-config) constitution_config="$2"; shift 2 ;;
+            --ego-speed) ego_speed="$2"; shift 2 ;;
+            --ego-heading) ego_heading="$2"; shift 2 ;;
             *) extra_args+=("$1"); shift ;;
         esac
     done
@@ -228,17 +245,27 @@ main() {
         track_args+=("--no-track")
     fi
 
+    # 构建宪法评估参数
+    local constitution_args=()
+    if [[ "$constitution" == true ]]; then
+        constitution_args+=("--ego-speed" "$ego_speed" "--ego-heading" "$ego_heading")
+        [[ -n "$constitution_config" ]] && constitution_args+=("--constitution-config" "$constitution_config")
+    else
+        constitution_args+=("--no-constitution")
+    fi
+
     case "$action" in
+        demo) show_banner "宪法评估演示"; python3 -m aylm.cli demo "${extra_args[@]}" ;;
         setup) log_step "下载模型..."; python3 -m aylm.cli setup --download ;;
         voxelize) run_voxelize "${extra_args[@]}" ;;
         predict) run_predict "${extra_args[@]}" ;;
         full) run_full "${extra_args[@]}" ;;
-        pipeline) run_pipeline "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" ;;
+        pipeline) run_pipeline "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" "${constitution_args[@]}" ;;
         video)
             local video_args=("${extra_args[@]}")
             [[ -n "$config_file" ]] && video_args+=("-c" "$config_file")
             [[ "$use_gpu" == true ]] && video_args+=("--use-gpu")
-            video_args+=("${semantic_args[@]}" "${slice_args[@]}" "${track_args[@]}")
+            video_args+=("${semantic_args[@]}" "${slice_args[@]}" "${track_args[@]}" "${constitution_args[@]}")
             show_banner "视频处理"
             run_video_process "${video_args[@]}" ;;
         video-extract)
@@ -250,7 +277,7 @@ main() {
             local play_args=("-i" "$input_dir" "--fps" "$fps")
             [[ "$loop" == true ]] && play_args+=("--loop")
             run_video_play "${play_args[@]}" ;;
-        auto) run_auto "$input_dir" "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" "${track_args[@]}" ;;
+        auto) run_auto "$input_dir" "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" "${track_args[@]}" "${constitution_args[@]}" ;;
     esac
 
     log_info "完成"

@@ -54,6 +54,10 @@ all = [
     "ultralytics>=8.3.0",
     "scikit-learn>=1.0.0",
 ]
+api = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.20.0",
+]
 
 [project.scripts]
 aylm = "aylm.cli:main"

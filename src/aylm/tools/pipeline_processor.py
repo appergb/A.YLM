@@ -92,6 +92,11 @@ class PipelineConfig:
     colorize_semantic: bool = True  # 语义着色
     # 导航输出配置
     output_navigation_ply: bool = True  # 是否输出导航用点云（机器人坐标系）
+    # 宪法安全评估配置
+    enable_constitution: bool = True  # 是否启用宪法评估
+    constitution_config_path: Path | None = None  # 自定义宪法配置文件路径
+    ego_speed: float = 0.0  # 自车速度 m/s
+    ego_heading: float = 0.0  # 自车航向（弧度）
 
 
 @dataclass
@@ -239,6 +244,7 @@ class PipelineProcessor:
         self._model_loaded = False
         self._voxelizer: PointCloudVoxelizer | None = None
         self._detector: ObjectDetector | None = None  # YOLO 语义检测器
+        self._constitution = None  # 宪法评估集成
         self._tasks: list[ImageTask] = []
         self._stop_event = threading.Event()
         self._predict_lock = threading.Lock()
@@ -259,6 +265,7 @@ class PipelineProcessor:
         self._unload_model()
         self._cleanup_voxelizer()
         self._cleanup_detector()
+        self._cleanup_constitution()
         self._cleanup_async()
 
     def _unload_model(self):
@@ -317,6 +324,30 @@ class PipelineProcessor:
             self._detector.unload()
             del self._detector
             self._detector = None
+
+    def _load_constitution(self):
+        """加载宪法评估集成。"""
+        from aylm.tools.constitution_integration import ConstitutionIntegration
+
+        self.log.stage("加载宪法安全评估器...")
+        config = ConstitutionIntegration.load_config(
+            self.config.constitution_config_path
+        )
+        self._constitution = ConstitutionIntegration(
+            config=config,
+            ego_speed=self.config.ego_speed,
+            ego_heading=self.config.ego_heading,
+        )
+        if self._constitution.is_available:
+            self.log.ok(f"宪法评估器已就绪 (自车速度: {self.config.ego_speed}m/s)")
+        else:
+            self.log.warn("宪法评估器初始化失败，将跳过安全评估")
+
+    def _cleanup_constitution(self):
+        """清理宪法评估集成。"""
+        if self._constitution is not None:
+            del self._constitution
+            self._constitution = None
 
     def _cleanup_async(self):
         if self._async_executor is not None:
@@ -789,6 +820,29 @@ class PipelineProcessor:
                 marker.export_to_json(obstacles_robot, json_path)
                 self.log.ok(f"    障碍物信息已导出 (机器人坐标系): {json_path.name}")
 
+                # 步骤4: 宪法安全评估
+                if self._constitution is not None and self._constitution.is_available:
+                    import json
+
+                    obstacles_data = [obs.to_dict() for obs in obstacles_robot]
+                    evaluation = self._constitution.evaluate_frame(
+                        obstacles_data=obstacles_data,
+                        frame_id=task.index,
+                        timestamp=time.time(),
+                    )
+                    if evaluation:
+                        with open(json_path, encoding="utf-8") as f:
+                            data = json.load(f)
+                        data["constitution_evaluation"] = evaluation
+                        with open(json_path, "w", encoding="utf-8") as f:
+                            from .json_utils import numpy_safe_dump
+
+                            numpy_safe_dump(data, f, indent=2, ensure_ascii=False)
+                        overall = evaluation.get("safety_score", {}).get(
+                            "overall", "N/A"
+                        )
+                        self.log.ok(f"    宪法评估: 安全分={overall}")
+
         except Exception as e:
             self.log.warn(f"    语义融合失败: {e}")
             logger.exception(f"语义融合异常 - {task.image_path.name}")
@@ -927,11 +981,17 @@ class PipelineProcessor:
         if self.config.enable_semantic:
             self._load_detector()
 
+        # 加载宪法评估器（如果启用）
+        if self.config.enable_constitution:
+            self._load_constitution()
+
         # 执行流水线
         self.log.section("阶段 3: 流水线处理")
         self.log.info("流水线模式: 推理(N) || 体素化(N-1)")
         if self.config.enable_semantic:
             self.log.info("语义检测: 已启用")
+        if self.config.enable_constitution:
+            self.log.info("宪法安全评估: 已启用")
         if navigation_dir is not None:
             self.log.info("导航输出: 已启用 (机器人坐标系)")
         self.log.info("")
@@ -966,6 +1026,7 @@ class PipelineProcessor:
             self._unload_model()
             self._cleanup_voxelizer()
             self._cleanup_detector()
+            self._cleanup_constitution()
 
         return self.stats
 

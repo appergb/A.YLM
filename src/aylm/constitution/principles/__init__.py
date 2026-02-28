@@ -4,9 +4,15 @@
 """
 
 from .collision import NoCollisionPrinciple
+from .following import SafeFollowingPrinciple
+from .lane import LaneCompliancePrinciple
+from .speed import SpeedLimitPrinciple
 from .ttc import TTCSafetyPrinciple
 
 __all__ = [
+    "LaneCompliancePrinciple",
     "NoCollisionPrinciple",
+    "SafeFollowingPrinciple",
+    "SpeedLimitPrinciple",
     "TTCSafetyPrinciple",
 ]
