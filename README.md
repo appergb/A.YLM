@@ -3,14 +3,14 @@
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11/3.12](https://img.shields.io/badge/python-3.11%2F3.12-blue.svg)](https://www.python.org/downloads/)
 [![arXiv](https://img.shields.io/badge/arXiv-2026.xxxxx-b31b1b.svg)](https://arxiv.org)
 
 **Self-Supervised Safety Framework | Autonomous Driving | Robotics | Embodied AI**
 
 *Extending Anthropic's Constitutional AI paradigm from language to the physical world*
 
-[Paper](#) | [Documentation](#) | [Demo](#) | [中文文档](docs/paper_aylm_zh.md)
+[Paper](#) | [Documentation](#) | [Demo](#) | [中文文档](#)
 
 </div>
 
@@ -403,7 +403,7 @@ A-YLM is designed for **edge deployment** alongside E2E models:
 | Representation | Data Size | Inference Complexity |
 |----------------|-----------|----------------------|
 | Raw 3DGS | ~500K Gaussians | O(n²) rendering |
-| Voxel Grid (5cm) | ~50K voxels | O(n) lookup |
+| Voxel Grid (voxel representation) | ~50K voxels | O(n) lookup |
 | Sparse Voxel | ~10K occupied | O(k) where k << n |
 
 This compression enables **real-time safety validation** on edge computing platforms.
@@ -440,7 +440,7 @@ We leverage Apple's **SHARP** model for efficient 3D reconstruction:
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| Python | 3.9+ (3.11 recommended) | Runtime |
+| Python | 3.11/3.12 (for `run.sh`) | Runtime |
 | PyTorch | 2.0+ | Deep Learning Framework |
 | Open3D | 0.17+ | Point Cloud Processing |
 | Ultralytics | 8.0+ | YOLO Object Detection |
@@ -494,7 +494,22 @@ python -c "from ultralytics import YOLO; YOLO('yolo11n-seg.pt')"
 
 ### 6.1 One-Click Execution
 
+Before running `./run.sh`, ensure:
+
+- Clone with submodules (`ml-sharp` is required):
+  - `git clone --recursive https://github.com/appergb/A.YLM.git`
+  - or `git submodule update --init --recursive`
+- Python 3.11 or 3.12 is available (`run.sh` enforces this range)
+- First-time dependency/model install can access network
+- Default auto mode needs real files in `inputs/input_images` or `inputs/videos`
+
 ```bash
+# Environment preflight only
+./run.sh --check-only
+
+# Constitution demo (no image/video required)
+./run.sh --demo
+
 # Complete safety validation workflow
 ./run.sh
 
@@ -801,7 +816,7 @@ asyncio.run(realtime_evaluation())
 |--------------|--------|-------------|
 | `*.ply` | PLY | Raw 3DGS point cloud from SHARP |
 | `vox_*.ply` | PLY | Voxelized point cloud with semantic colors |
-| `nav_*.ply` | PLY | Safety validation mesh (5cm solid cubes) |
+| `nav_*.ply` | PLY | Safety validation mesh (voxel cubes) |
 | `*_obstacles.json` | JSON | Structured obstacle data for safety validation |
 
 ### 7.2 Safety Validation JSON Schema
@@ -908,7 +923,7 @@ export CUDA_VISIBLE_DEVICES="0"  # GPU selection
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `DEFAULT_VOXEL_SIZE` | 0.05 | Safety validation voxel size (5cm) |
+| `DEFAULT_VOXEL_SIZE` | 0.05 | Safety validation voxel size (voxel) |
 | `DEFAULT_SLICE_RADIUS` | 20.0 | Processing radius (meters) |
 | `DEFAULT_FOV_DEGREES` | 60.0 | Camera field of view |
 | `DEFAULT_DENSITY_THRESHOLD` | 3 | Minimum points per voxel |
@@ -1007,6 +1022,7 @@ A.YLM/
 │       ├── constitution_integration.py # Constitution ↔ Pipeline bridge
 │       └── constitution_demo.py        # Interactive constitution demo
 ├── ml-sharp/                           # Apple SHARP Model (submodule)
+├── local_only/                         # Local-only workspace (skeleton tracked, content ignored)
 ├── models/                             # Model Checkpoints
 ├── configs/                            # Configuration Files
 │   └── constitution_example.yaml       # Example constitution config
@@ -1022,6 +1038,19 @@ A.YLM/
 ├── run.sh                              # One-Click Execution Script
 └── pyproject.toml                      # Project Configuration
 ```
+
+### 9.1 Local-only workspace convention
+
+Use `local_only/` for files that should stay local and not be uploaded:
+
+- Research drafts and personal notes
+- Local test datasets and media
+- Temporary benchmark scripts/results
+- Local run outputs and archived artifacts
+
+Current policy:
+- Track directory skeleton (`README_LOCAL.md`, `.gitkeep`) for team consistency
+- Ignore actual private content via `.gitignore`
 
 ---
 
@@ -1070,15 +1099,30 @@ ruff check src/aylm tests
 mypy src/aylm
 ```
 
+### 11.3 CI Checks
+
+Current CI includes:
+
+- Unit tests (`ubuntu-latest`, `macos-latest`, Python 3.11)
+- Lint and format checks (`black`, `isort`, `ruff`, `mypy`)
+- `run.sh` smoke checks on clean checkout:
+  - `./run.sh --check-only`
+  - `./run.sh --demo`
+  - Python matrix: 3.11 / 3.12
+
 ---
 
 ## 12. Troubleshooting
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| Open3D installation failed | Python 3.13 incompatibility | Use Python 3.11 |
+| `pip install -e ml-sharp/` failed in first run | Submodule not initialized | Run `git submodule update --init --recursive` |
+| `run.sh` reports unsupported Python version | Using Python outside 3.11/3.12 | Use Python 3.11 or 3.12 and recreate venv |
+| `./run.sh` found no image/video in auto mode | No real files in `inputs/input_images` or `inputs/videos` | Add input files, or run `./run.sh --demo` first |
+| Open3D installation failed | Python version incompatibility | Use Python 3.11 or 3.12 |
 | YOLO model not found | First-time download | Run `pip install ultralytics` |
 | SHARP model download failed | Network issue | Manual download from Apple CDN |
+| Dependency install fails on first setup | Network / DNS / mirror issue | Check connectivity to GitHub/PyPI and retry |
 | Out of memory | Large point cloud | Increase `voxel_size` or use `--slice-radius` |
 | CUDA/MPS unavailable | Driver issue | Check `torch.cuda.is_available()` |
 
