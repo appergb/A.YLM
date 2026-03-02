@@ -18,6 +18,53 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step() { echo -e "${BLUE}[STEP]${NC} $1"; }
 
+python_major_minor() {
+    "$1" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null
+}
+
+is_supported_python() {
+    local py_cmd="$1"
+    local major_minor
+    major_minor=$(python_major_minor "$py_cmd")
+    [[ "$major_minor" == "3.11" || "$major_minor" == "3.12" ]]
+}
+
+ensure_python_supported() {
+    local py_cmd="$1" context="$2"
+    local version_text
+    version_text=$("$py_cmd" --version 2>&1 || echo "unknown")
+    if ! is_supported_python "$py_cmd"; then
+        log_error "${context} 使用的 Python 版本不受支持: ${version_text}"
+        echo "  run.sh 当前仅支持 Python 3.11 或 3.12（Open3D 兼容性限制）"
+        return 1
+    fi
+}
+
+select_python_cmd() {
+    local candidate
+    for candidate in python3 python3.11 python3.12; do
+        command -v "$candidate" >/dev/null 2>&1 || continue
+        if is_supported_python "$candidate"; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+ensure_ml_sharp_submodule() {
+    local sharp_dir="$SCRIPT_DIR/ml-sharp"
+    local sharp_pyproject="$sharp_dir/pyproject.toml"
+    [[ -d "$sharp_dir" && -f "$sharp_pyproject" ]] && return 0
+
+    log_error "检测到 ml-sharp 子模块缺失或未初始化。"
+    echo "  请在仓库根目录执行："
+    echo "    git submodule update --init --recursive"
+    echo "  或重新克隆："
+    echo "    git clone --recursive <repo-url>"
+    exit 1
+}
+
 show_help() {
     cat << EOF
 ${CYAN}AYLM v2 - 3D Gaussian Splatting 点云处理工具${NC}
@@ -74,8 +121,9 @@ ${YELLOW}宪法安全评估选项:${NC}
   --ego-heading           自车航向/弧度 (默认: 0.0)
 
 ${YELLOW}示例:${NC}
+  ./run.sh --check-only                 # 仅检查环境
   ./run.sh --demo                       # 宪法评估演示
-  ./run.sh --setup                      # 初始化
+  ./run.sh --setup                      # 初始化/下载模型
   ./run.sh -i ./images                # 处理图像
   ./run.sh --video -i video.mp4       # 处理视频
   ./run.sh --semantic -i ./images     # 启用语义检测
@@ -111,19 +159,32 @@ check_and_install_deps() {
 
     [[ ${#missing[@]} -gt 0 ]] && { log_info "安装: ${missing[*]}"; pip install --quiet "${missing[@]}"; }
     python3 -c "import aylm" 2>/dev/null || pip install --quiet -e .
-    [[ -d "$SCRIPT_DIR/ml-sharp" ]] && python3 -c "import sharp" 2>/dev/null || pip install --quiet -e "$SCRIPT_DIR/ml-sharp/"
+    if [[ -f "$SCRIPT_DIR/ml-sharp/pyproject.toml" ]]; then
+        python3 -c "import sharp" 2>/dev/null || pip install --quiet -e "$SCRIPT_DIR/ml-sharp/"
+    fi
 }
 
 setup_env() {
-    local venv_path
+    local venv_path python_cmd
     if venv_path=$(find_venv); then
         log_info "找到虚拟环境: $venv_path"
+        activate_venv "$venv_path"
+        ensure_python_supported python3 "虚拟环境" || {
+            echo "  请删除当前虚拟环境并使用 Python 3.11/3.12 重新创建。"
+            exit 1
+        }
     else
         venv_path="$SCRIPT_DIR/aylm_env"
-        log_info "创建虚拟环境: $venv_path"
-        python3 -m venv "$venv_path"
+        if ! python_cmd=$(select_python_cmd); then
+            log_error "未找到受支持的 Python 版本（3.11/3.12）。"
+            command -v python3 >/dev/null 2>&1 && echo "  当前默认: $(python3 --version 2>&1)"
+            echo "  请安装 Python 3.11 或 3.12，并确保 python3.11 / python3.12 可用。"
+            exit 1
+        fi
+        log_info "创建虚拟环境: $venv_path (使用 $python_cmd)"
+        "$python_cmd" -m venv "$venv_path"
+        activate_venv "$venv_path"
     fi
-    activate_venv "$venv_path"
     check_and_install_deps
 }
 
@@ -163,9 +224,10 @@ run_auto() {
         local first_video=$(eval "find inputs/videos -maxdepth 1 -type f \( $VIDEO_EXTS \) 2>/dev/null | head -1")
         [[ -n "$first_video" ]] && run_video_process -i "$first_video" -o "outputs/video_output" "$@"
     else
-        log_error "未找到图像或视频文件"
+        log_info "未检测到可处理输入，默认模式不会自动运行完整流程。"
         echo "  请将文件放入: $input_dir 或 inputs/videos/"
-        exit 1
+        echo "  或先运行演示模式验证环境: ./run.sh --demo"
+        return 0
     fi
 }
 
@@ -214,6 +276,7 @@ main() {
         esac
     done
 
+    ensure_ml_sharp_submodule
     setup_env
 
     if [[ "$check_only" == true ]]; then

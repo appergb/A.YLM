@@ -77,3 +77,6 @@ logs/
 # Temporary docs (not for production)
 docs/requirements_video_processing.md
 docs/
+
+# Unified local-only workspace (papers, test data, temp scripts, agent notes)
+local_only/

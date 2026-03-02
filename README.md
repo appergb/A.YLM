@@ -3,7 +3,7 @@
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11/3.12](https://img.shields.io/badge/python-3.11%2F3.12-blue.svg)](https://www.python.org/downloads/)
 [![arXiv](https://img.shields.io/badge/arXiv-2026.xxxxx-b31b1b.svg)](https://arxiv.org)
 
 **Self-Supervised Safety Framework | Autonomous Driving | Robotics | Embodied AI**
@@ -440,7 +440,7 @@ We leverage Apple's **SHARP** model for efficient 3D reconstruction:
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| Python | 3.9+ (3.11 recommended) | Runtime |
+| Python | 3.11/3.12 (required by `run.sh`) | Runtime |
 | PyTorch | 2.0+ | Deep Learning Framework |
 | Open3D | 0.17+ | Point Cloud Processing |
 | Ultralytics | 8.0+ | YOLO Object Detection |
@@ -494,8 +494,24 @@ python -c "from ultralytics import YOLO; YOLO('yolo11n-seg.pt')"
 
 ### 6.1 One-Click Execution
 
+Before running `./run.sh` for the first time, ensure:
+
+- Repository is cloned with submodules:
+  - `git clone --recursive https://github.com/appergb/A.YLM.git`
+  - If already cloned: `git submodule update --init --recursive`
+- Python 3.11 or 3.12 is available (`run.sh` checks and rejects unsupported versions).
+- Network access to GitHub and PyPI is available for first-time dependency/model install.
+- Default mode needs real input files in `inputs/input_images` or `inputs/videos`.
+  - If you only want to verify setup first, run `./run.sh --demo`.
+
 ```bash
-# Complete safety validation workflow
+# Environment preflight only
+./run.sh --check-only
+
+# Constitution demo (no model/image required)
+./run.sh --demo
+
+# Complete safety validation workflow (requires real input files)
 ./run.sh
 
 # Custom input directory
@@ -1076,7 +1092,10 @@ mypy src/aylm
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| Open3D installation failed | Python 3.13 incompatibility | Use Python 3.11 |
+| `pip install -e ml-sharp/` failed in `run.sh` | Submodule not initialized | Run `git submodule update --init --recursive` (or reclone with `--recursive`) |
+| `run.sh` reports unsupported Python version | Using Python 3.10/3.13+/3.14 | Use Python 3.11 or 3.12 (recommended: create venv with `python3.11 -m venv aylm_env`) |
+| `./run.sh` shows no image/video found | No real files under `inputs/input_images` or `inputs/videos` | Add input files, or run `./run.sh --demo` first |
+| Open3D installation failed | Python version incompatibility | Use Python 3.11 or 3.12 |
 | YOLO model not found | First-time download | Run `pip install ultralytics` |
 | SHARP model download failed | Network issue | Manual download from Apple CDN |
 | Out of memory | Large point cloud | Increase `voxel_size` or use `--slice-radius` |
