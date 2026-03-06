@@ -543,6 +543,9 @@ aylm demo --ego-speed 10.0
 
 # Stage 6: Constitution API Server (宪法评估 HTTP/WebSocket 服务)
 aylm serve --port 8000 --ego-speed 10.0
+
+# Stage 7: Multi-frame Point Cloud Fusion (多帧点云配准融合)
+aylm fuse -i outputs/output_gaussians -o outputs/fused --voxel-size 0.02
 ```
 
 ### 6.3 Video Processing
@@ -1010,15 +1013,21 @@ A.YLM/
 │   └── tools/                          # Processing Modules
 │       ├── pipeline_processor.py       # Parallel Pipeline Orchestration
 │       ├── video_pipeline.py           # Video Sequence Processing + Tracking
+│       ├── video_extractor.py          # Video Frame Extraction (producer-consumer)
+│       ├── video_config.py             # Video Pipeline Configuration
+│       ├── video_types.py              # Video Pipeline Data Types
 │       ├── pointcloud_voxelizer.py     # Occupancy 2.0 Voxelization
 │       ├── semantic_fusion.py          # 2D→3D Semantic Projection
+│       ├── semantic_types.py           # Semantic Label Definitions
 │       ├── object_detector.py          # YOLO Instance Segmentation
 │       ├── obstacle_marker.py          # DBSCAN Obstacle Clustering
 │       ├── object_tracker.py           # ByteTrack Multi-Object Tracking
 │       ├── motion_estimator.py         # Kalman-filtered Motion Estimation
+│       ├── multiframe_fusion.py        # Multi-frame Point Cloud Registration
 │       ├── pointcloud_slicer.py        # Spatial ROI Extraction
 │       ├── coordinate_utils.py         # CV↔Robot Coordinate Transform
 │       ├── json_utils.py               # numpy-safe JSON serialization
+│       ├── voxel_player.py             # Voxel Sequence Visualization Player
 │       ├── constitution_integration.py # Constitution ↔ Pipeline bridge
 │       └── constitution_demo.py        # Interactive constitution demo
 ├── ml-sharp/                           # Apple SHARP Model (submodule)
@@ -1034,7 +1043,7 @@ A.YLM/
 │   ├── voxelized/                      # Occupancy Grids + Obstacle JSONs
 │   ├── detections/                     # Detection Results
 │   └── video_output/                   # Video Pipeline Output
-├── tests/                              # Test Suite (378+ tests)
+├── tests/                              # Test Suite (382+ tests)
 ├── run.sh                              # One-Click Execution Script
 └── pyproject.toml                      # Project Configuration
 ```
@@ -1104,11 +1113,10 @@ mypy src/aylm
 Current CI includes:
 
 - Unit tests (`ubuntu-latest`, `macos-latest`, Python 3.11)
-- Lint and format checks (`black`, `isort`, `ruff`, `mypy`)
-- `run.sh` smoke checks on clean checkout:
+- `run.sh` smoke checks (`ubuntu-latest`, Python 3.11 / 3.12):
   - `./run.sh --check-only`
   - `./run.sh --demo`
-  - Python matrix: 3.11 / 3.12
+- Lint and format checks (`black`, `isort`, `ruff`, `mypy`)
 
 ---
 
