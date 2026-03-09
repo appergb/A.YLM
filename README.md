@@ -453,32 +453,49 @@ We leverage Apple's **SHARP** model for efficient 3D reconstruction:
 
 ## 5. Installation
 
-### 5.1 Quick Start
+### 5.1 Standard macOS GPU Environment
+
+Current recommended environment on Apple Silicon is the project-scoped conda GPU environment:
+
+- Path: `.conda/aylm-macos-mps`
+- Backend: `PyTorch MPS`
+- Python: `3.11`
+
+Create or repair it with:
+
+```bash
+chmod +x scripts/setup_macos_gpu_env.sh
+./scripts/setup_macos_gpu_env.sh
+```
+
+Activate it manually with:
+
+```bash
+eval "$(/opt/homebrew/Caskroom/miniforge/base/bin/conda shell.zsh hook)"
+conda activate "$(pwd)/.conda/aylm-macos-mps"
+```
+
+### 5.2 Quick Start
 
 ```bash
 # Clone repository with submodules
 git clone --recursive https://github.com/appergb/A.YLM.git
 cd A.YLM
 
-# Create virtual environment (Python 3.11 recommended)
-python3.11 -m venv aylm_env
-source aylm_env/bin/activate
+# Build the standard GPU environment
+./scripts/setup_macos_gpu_env.sh
 
-# Install core dependencies
-pip install -e .
-pip install -e ml-sharp/
+# Activate it
+eval "$(/opt/homebrew/Caskroom/miniforge/base/bin/conda shell.zsh hook)"
+conda activate "$(pwd)/.conda/aylm-macos-mps"
 
-# Install full feature set
-pip install -e ".[full]"
-
-# Install API server (FastAPI + uvicorn) for HTTP/WebSocket interface
-pip install -e ".[api]"
-
-# Install development tools (pytest, black, ruff, etc.)
-pip install -e ".[dev]"
+# Check environment
+./run.sh --check-only
 ```
 
-### 5.2 Model Setup
+For non-macOS or CPU-only workflows, a plain `venv` is still possible, but it is no longer the primary recommended setup on Apple Silicon.
+
+### 5.3 Model Setup
 
 ```bash
 # SHARP model (~2.8GB) - auto-downloads on first use
@@ -499,9 +516,16 @@ Before running `./run.sh`, ensure:
 - Clone with submodules (`ml-sharp` is required):
   - `git clone --recursive https://github.com/appergb/A.YLM.git`
   - or `git submodule update --init --recursive`
+- The standard environment exists at `.conda/aylm-macos-mps`
 - Python 3.11 or 3.12 is available (`run.sh` enforces this range)
 - First-time dependency/model install can access network
 - Default auto mode needs real files in `inputs/input_images` or `inputs/videos`
+
+`run.sh` priority is:
+
+1. Currently activated supported conda environment
+2. Project standard conda environment `.conda/aylm-macos-mps`
+3. Existing project `venv` / `aylm_env`
 
 ```bash
 # Environment preflight only
@@ -512,6 +536,9 @@ Before running `./run.sh`, ensure:
 
 # Complete safety validation workflow
 ./run.sh
+
+# Explicit video run with GPU path
+./run.sh --video -i inputs/videos/IMG_6769.MOV -o outputs/video_output --use-gpu
 
 # Custom input directory
 ./run.sh --input /path/to/images

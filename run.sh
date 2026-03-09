@@ -9,6 +9,7 @@ cd "$SCRIPT_DIR"
 # 颜色定义
 RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m'
 BLUE='\033[0;34m' CYAN='\033[0;36m' NC='\033[0m'
+PYTHON_BIN="python3"
 
 # 文件扩展名模式
 IMAGE_EXTS='-iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.heic" -o -iname "*.webp" -o -iname "*.tiff" -o -iname "*.bmp"'
@@ -17,6 +18,14 @@ VIDEO_EXTS='-iname "*.mp4" -o -iname "*.mov" -o -iname "*.avi" -o -iname "*.mkv"
 log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step() { echo -e "${BLUE}[STEP]${NC} $1"; }
+
+set_python_bin() {
+    if command -v python >/dev/null 2>&1; then
+        PYTHON_BIN="python"
+    else
+        PYTHON_BIN="python3"
+    fi
+}
 
 python_major_minor() {
     "$1" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null
@@ -140,10 +149,59 @@ find_venv() {
     return 1
 }
 
+init_conda_shell() {
+    local conda_bin="${CONDA_EXE:-}"
+
+    if [[ -z "$conda_bin" || ! -x "$conda_bin" ]]; then
+        if command -v conda >/dev/null 2>&1; then
+            conda_bin="$(command -v conda)"
+        elif [[ -x "/opt/homebrew/Caskroom/miniforge/base/bin/conda" ]]; then
+            conda_bin="/opt/homebrew/Caskroom/miniforge/base/bin/conda"
+        else
+            return 1
+        fi
+    fi
+
+    eval "$("$conda_bin" shell.bash hook)" >/dev/null 2>&1
+}
+
+find_project_conda_env() {
+    local candidate
+    for candidate in \
+        "$SCRIPT_DIR/.conda/aylm-macos-mps" \
+        "$SCRIPT_DIR/.conda/aylm-linux" \
+        "$SCRIPT_DIR/.conda/aylm-windows"
+    do
+        [[ -x "$candidate/bin/python" ]] || continue
+        echo "$candidate"
+        return 0
+    done
+    return 1
+}
+
+activate_conda_env() {
+    local env_path="$1"
+    [[ -x "$env_path/bin/python" ]] || {
+        log_error "无法激活 conda 环境: $env_path"
+        exit 1
+    }
+
+    init_conda_shell || {
+        log_error "检测到项目 conda 环境，但无法初始化 conda shell。"
+        echo "  请确认已安装 Miniforge/conda。"
+        exit 1
+    }
+
+    conda activate "$env_path"
+    set_python_bin
+    log_info "已激活项目 conda 环境: $env_path"
+}
+
 activate_venv() {
     local venv_path="$1"
     [[ -f "$venv_path/bin/activate" ]] || { log_error "无法激活虚拟环境: $venv_path"; exit 1; }
     source "$venv_path/bin/activate"
+    set_python_bin
     log_info "已激活虚拟环境: $venv_path"
 }
 
@@ -154,18 +212,33 @@ check_and_install_deps() {
         local import_name="$dep"
         [[ "$dep" == "Pillow" ]] && import_name="PIL"
         [[ "$dep" == "opencv-python" ]] && import_name="cv2"
-        python3 -c "import $import_name" 2>/dev/null || missing+=("$dep")
+        "$PYTHON_BIN" -c "import $import_name" 2>/dev/null || missing+=("$dep")
     done
 
-    [[ ${#missing[@]} -gt 0 ]] && { log_info "安装: ${missing[*]}"; pip install --quiet "${missing[@]}"; }
-    python3 -c "import aylm" 2>/dev/null || pip install --quiet -e .
+    [[ ${#missing[@]} -gt 0 ]] && { log_info "安装: ${missing[*]}"; "$PYTHON_BIN" -m pip install --quiet "${missing[@]}"; }
+    "$PYTHON_BIN" -c "import aylm" 2>/dev/null || "$PYTHON_BIN" -m pip install --quiet -e .
     if [[ -f "$SCRIPT_DIR/ml-sharp/pyproject.toml" ]]; then
-        python3 -c "import sharp" 2>/dev/null || pip install --quiet -e "$SCRIPT_DIR/ml-sharp/"
+        "$PYTHON_BIN" -c "import sharp" 2>/dev/null || "$PYTHON_BIN" -m pip install --quiet -e "$SCRIPT_DIR/ml-sharp/"
     fi
 }
 
 setup_env() {
-    local venv_path python_cmd
+    local venv_path python_cmd conda_env
+
+    if [[ -n "${CONDA_PREFIX:-}" ]] && is_supported_python python; then
+        set_python_bin
+        log_info "检测到已激活的 conda 环境: $CONDA_PREFIX"
+        check_and_install_deps
+        return 0
+    fi
+
+    if conda_env=$(find_project_conda_env); then
+        activate_conda_env "$conda_env"
+        ensure_python_supported python "conda 环境" || exit 1
+        check_and_install_deps
+        return 0
+    fi
+
     if venv_path=$(find_venv); then
         log_info "找到虚拟环境: $venv_path"
         activate_venv "$venv_path"
@@ -201,13 +274,13 @@ show_banner() {
     echo -e "${CYAN}============================================================${NC}\n"
 }
 
-run_voxelize() { log_step "体素化处理..."; python3 -m aylm.cli voxelize "$@"; }
-run_predict() { log_step "预测流程..."; python3 -m aylm.cli predict "$@"; }
-run_full() { log_step "完整流程（顺序）..."; python3 -m aylm.cli process "$@"; }
-run_pipeline() { log_step "流水线处理（并行）..."; python3 -m aylm.cli pipeline "$@"; }
-run_video_process() { log_step "视频处理..."; python3 -m aylm.cli video process "$@"; }
-run_video_extract() { log_step "提取视频帧..."; python3 -m aylm.cli video extract "$@"; }
-run_video_play() { log_step "播放体素序列..."; python3 -m aylm.cli video play "$@"; }
+run_voxelize() { log_step "体素化处理..."; "$PYTHON_BIN" -m aylm.cli voxelize "$@"; }
+run_predict() { log_step "预测流程..."; "$PYTHON_BIN" -m aylm.cli predict "$@"; }
+run_full() { log_step "完整流程（顺序）..."; "$PYTHON_BIN" -m aylm.cli process "$@"; }
+run_pipeline() { log_step "流水线处理（并行）..."; "$PYTHON_BIN" -m aylm.cli pipeline "$@"; }
+run_video_process() { log_step "视频处理..."; "$PYTHON_BIN" -m aylm.cli video process "$@"; }
+run_video_extract() { log_step "提取视频帧..."; "$PYTHON_BIN" -m aylm.cli video extract "$@"; }
+run_video_play() { log_step "播放体素序列..."; "$PYTHON_BIN" -m aylm.cli video play "$@"; }
 
 run_auto() {
     local input_dir="$1"; shift
@@ -281,7 +354,7 @@ main() {
 
     if [[ "$check_only" == true ]]; then
         show_banner "环境检查"
-        echo "  Python: $(python3 --version) | 图像: $(count_files "$input_dir" "$IMAGE_EXTS") | 视频: $(count_files "inputs/videos" "$VIDEO_EXTS")"
+        echo "  Python: $("$PYTHON_BIN" --version) | 图像: $(count_files "$input_dir" "$IMAGE_EXTS") | 视频: $(count_files "inputs/videos" "$VIDEO_EXTS")"
         [[ -f "$SCRIPT_DIR/models/sharp_2572gikvuh.pt" ]] && echo -e "  模型: ${GREEN}已下载${NC}" || echo -e "  模型: ${YELLOW}未下载${NC}"
         exit 0
     fi
@@ -318,8 +391,8 @@ main() {
     fi
 
     case "$action" in
-        demo) show_banner "宪法评估演示"; python3 -m aylm.cli demo "${extra_args[@]}" ;;
-        setup) log_step "下载模型..."; python3 -m aylm.cli setup --download ;;
+        demo) show_banner "宪法评估演示"; "$PYTHON_BIN" -m aylm.cli demo "${extra_args[@]}" ;;
+        setup) log_step "下载模型..."; "$PYTHON_BIN" -m aylm.cli setup --download ;;
         voxelize) run_voxelize "${extra_args[@]}" ;;
         predict) run_predict "${extra_args[@]}" ;;
         full) run_full "${extra_args[@]}" ;;
