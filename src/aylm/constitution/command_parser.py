@@ -74,12 +74,16 @@ class JSONCommandParser(CommandParser):
 
     def can_parse(self, command: str | dict) -> bool:
         if isinstance(command, dict):
-            return "type" in command
+            return "type" in command or "decision_type" in command
         return False
 
     def parse(self, command: str | dict, **context: Any) -> AIDecision:
         if not isinstance(command, dict):
             raise ValueError("JSONCommandParser 只接受 dict 类型指令")
+
+        # 兼容 AIDecision.to_dict() 的输出格式
+        if "type" not in command and "decision_type" in command:
+            return AIDecision.from_dict(command)
 
         cmd_type = command.get("type", "")
         ego_speed = float(context.get("ego_speed", 0.0))

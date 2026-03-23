@@ -203,6 +203,9 @@ class ObstacleMarkerConfig:
 
     min_points: int = 10  # 最小点数阈值，少于此数的检测被忽略
     min_confidence: float = 0.5  # 最小置信度阈值
+    # 边界框鲁棒裁剪参数
+    bbox_trim_percentile: float = 0.0  # 两端裁剪比例 (0.0 表示不裁剪)
+    bbox_trim_min_points: int = 50  # 触发裁剪的最小点数
 
 
 class ObstacleMarker:
@@ -405,8 +408,13 @@ class ObstacleMarker:
         Returns:
             (center, dimensions): 中心点和尺寸
         """
-        min_pt = points.min(axis=0)
-        max_pt = points.max(axis=0)
+        trim = max(0.0, min(self.config.bbox_trim_percentile, 0.49))
+        if trim > 0.0 and len(points) >= self.config.bbox_trim_min_points:
+            min_pt = np.quantile(points, trim, axis=0)
+            max_pt = np.quantile(points, 1.0 - trim, axis=0)
+        else:
+            min_pt = points.min(axis=0)
+            max_pt = points.max(axis=0)
 
         center = tuple((min_pt + max_pt) / 2)
         dimensions = tuple(max_pt - min_pt)

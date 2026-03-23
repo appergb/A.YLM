@@ -1,5 +1,7 @@
 """Tests for pointcloud voxelizer module."""
 
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -254,11 +256,15 @@ class TestGPUAvailability:
     """Test GPU availability detection."""
 
     def test_has_torch_flag(self) -> None:
-        try:
-            import torch  # noqa: F401
-
+        result = subprocess.run(
+            [sys.executable, "-c", "import torch"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if result.returncode == 0:
             assert HAS_TORCH is True
-        except ImportError:
+        else:
             assert HAS_TORCH is False
 
     def test_has_open3d_flag(self) -> None:

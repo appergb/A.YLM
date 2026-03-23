@@ -298,6 +298,8 @@ def create_app(
             with _suppress_ws_close():
                 await ws.close(code=1011, reason=str(e))
 
+    return app
+
 
 def _suppress_ws_close():
     """安全关闭 WebSocket。"""
