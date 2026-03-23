@@ -442,7 +442,7 @@ We leverage Apple's **SHARP** model for efficient 3D reconstruction:
 |------------|---------|---------|
 | Python | 3.11/3.12 (for `run.sh`) | Runtime |
 | PyTorch | 2.0+ | Deep Learning Framework |
-| Open3D | 0.17+ | Point Cloud Processing |
+| Open3D | 0.18+ | Point Cloud Processing |
 | Ultralytics | 8.0+ | YOLO Object Detection |
 | NumPy | 1.24+ | Numerical Computing |
 | SciPy | 1.10+ | Hungarian Algorithm (Tracking) |
@@ -568,10 +568,13 @@ aylm pipeline -i inputs/input_images -o outputs/output_gaussians -v
 # Stage 5: Constitution Evaluation Demo (独立宪法评估演示)
 aylm demo --ego-speed 10.0
 
-# Stage 6: Constitution API Server (宪法评估 HTTP/WebSocket 服务)
+# Stage 6: Offline Navigation Demo (A-YLM artifacts + command proposer + safety gate)
+aylm nav-demo -i outputs/video_output -o outputs/nav_demo --provider heuristic --no-render
+
+# Stage 7: Constitution API Server (宪法评估 HTTP/WebSocket 服务)
 aylm serve --port 8000 --ego-speed 10.0
 
-# Stage 7: Multi-frame Point Cloud Fusion (多帧点云配准融合)
+# Stage 8: Multi-frame Point Cloud Fusion (多帧点云配准融合)
 aylm fuse -i outputs/output_gaussians -o outputs/fused --voxel-size 0.02
 ```
 
@@ -587,6 +590,73 @@ aylm video process -i video.mp4 -o output/ --use-gpu --ego-speed 10.0
 # Visualization playback
 aylm video play -i voxels/ --fps 10 --loop
 ```
+
+### 6.3.1 Offline Navigation Demo
+
+The new offline navigation demo keeps the original video pipeline unchanged and consumes
+its artifacts afterward. This is the intended low-risk path for a local Apple Silicon
+demo:
+
+```bash
+# 1) Run the A-YLM video pipeline first
+aylm video process -i demo.mp4 -o outputs/video_demo --use-gpu --ego-speed 1.0
+
+# 2) Install the optional MLX-VLM dependency for the command proposer
+pip install -e ".[navdemo]"
+
+# 3) Run the offline navigation demo with MLX-VLM + A-YLM validation
+aylm nav-demo \
+  -i outputs/video_demo \
+  -o outputs/nav_demo \
+  --provider mlx-vlm \
+  --model mlx-community/SmolVLM2-500M-Video-Instruct-mlx \
+  --window-size 4 \
+  --window-stride 2 \
+  --ego-speed 1.0
+
+# Safe smoke test without MLX-VLM
+aylm nav-demo -i outputs/video_demo -o outputs/nav_demo --provider heuristic --no-render
+```
+
+`aylm nav-demo` reads `extracted_frames/` plus `voxelized/vox_frame_*_obstacles.json`,
+proposes a short-horizon command, validates it through A-YLM's `CommandValidator`,
+falls back to `alternative_decision` or a safe stop when needed, and can render an
+annotated result video plus JSONL decision logs.
+
+### 6.3.2 MLX-VLM Training Signal Export (Optional Module)
+
+Training signal export is packaged as a **separate optional module** so the main
+project stays lightweight. Install it only when you want MLX-VLM evaluation and
+training-data generation:
+
+```bash
+# 1) Install the optional module (brings in mlx-vlm only when needed)
+cd extensions/aylm_mlx_vlm
+pip install -e .
+
+# 2) Run MLX-VLM demo + training signal export
+aylm-mlx-train -i outputs/video_demo -o outputs/nav_demo
+```
+
+This produces `commands.jsonl` (navigation decisions) and `training_signals.jsonl`
+for downstream training or analysis.
+
+One-click script (auto-activates env + installs optional module when needed):
+
+```bash
+scripts/run_mlx_demo.sh -i demo.mp4
+```
+
+If you omit `-i`, the script will automatically pick the first video under `inputs/`.
+
+You can also point it at an existing artifacts directory:
+
+```bash
+scripts/run_mlx_demo.sh -i outputs/video_demo --skip-video
+```
+
+If MLX-VLM is not installed, the script falls back to `nav-demo` with the
+heuristic provider and still exports `training_signals.jsonl`.
 
 ### 6.4 Python API
 
@@ -1013,11 +1083,19 @@ scorer:
 
 ```
 A.YLM/
+├── extensions/                        # Optional add-on modules
+│   └── aylm_mlx_vlm/                   # MLX-VLM training demo + signal export
 ├── src/aylm/                           # Core Package
-│   ├── cli.py                          # CLI (setup, predict, voxelize, process, pipeline, video, demo, serve)
+│   ├── cli.py                          # CLI (setup, predict, voxelize, process, pipeline, video, demo, nav-demo, serve)
 │   ├── api/                            # External API Module
 │   │   ├── session.py                  # ConstitutionSession (stateful evaluation)
 │   │   └── app.py                      # FastAPI HTTP + WebSocket server
+│   ├── navigation_demo/                # Offline navigation demo package
+│   │   ├── config.py                   # Demo runtime configuration
+│   │   ├── artifacts.py                # Artifact pairing + scene summarization
+│   │   ├── providers.py                # Heuristic / MLX-VLM command proposers
+│   │   ├── overlay.py                  # Annotated result video renderer
+│   │   └── runner.py                   # End-to-end offline demo orchestration
 │   ├── constitution/                   # Constitutional AI Module
 │   │   ├── base.py                     # ConstitutionPrinciple abstract base
 │   │   ├── evaluator.py               # ConstitutionEvaluator orchestrator
