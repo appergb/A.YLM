@@ -52,11 +52,13 @@ dev = [
 all = [
     "open3d>=0.18.0",
     "ultralytics>=8.3.0",
-    "scikit-learn>=1.0.0",
 ]
 api = [
     "fastapi>=0.100.0",
     "uvicorn[standard]>=0.20.0",
+]
+navdemo = [
+    "mlx-vlm>=0.1.13",
 ]
 
 [project.scripts]

@@ -25,6 +25,9 @@ aylm_env/
 venv/
 .venv/
 ENV/
+.conda/
+.mypy_cache/
+.resume_pdf_env/
 
 # Model files (too large for git)
 models/*.pt
@@ -85,3 +88,5 @@ local_only/**
 !local_only/README_LOCAL.md
 !local_only/**/
 !local_only/**/.gitkeep
+
+.devfleet-worktrees/

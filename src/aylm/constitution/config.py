@@ -48,7 +48,7 @@ class ConstitutionConfig:
     """
 
     # 宪法原则列表
-    principles: list[PrincipleConfig] = field(default_factory=list)
+    principles: list[PrincipleConfig] | None = None
 
     # 安全阈值
     ttc_warning_threshold: float = 3.0  # TTC 警告阈值（秒）
@@ -67,7 +67,7 @@ class ConstitutionConfig:
 
     def __post_init__(self):
         """初始化默认原则（如果未指定）。"""
-        if not self.principles:
+        if self.principles is None:
             self.principles = self._default_principles()
 
     @staticmethod
@@ -100,7 +100,7 @@ class ConstitutionConfig:
         weights = data.get("weights", {})
 
         return cls(
-            principles=principles if principles else None,
+            principles=principles,
             ttc_warning_threshold=thresholds.get("ttc_warning", 3.0),
             ttc_critical_threshold=thresholds.get("ttc_critical", 1.5),
             min_safe_distance=thresholds.get("min_safe_distance", 2.0),
@@ -141,7 +141,7 @@ class ConstitutionConfig:
                     "enabled": p.enabled,
                     "params": p.params,
                 }
-                for p in self.principles
+                for p in (self.principles or [])
             ],
             "thresholds": {
                 "ttc_warning": self.ttc_warning_threshold,

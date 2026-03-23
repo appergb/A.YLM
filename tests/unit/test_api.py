@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from aylm.api.session import ConstitutionSession, FrameRecord
 
 # ── ConstitutionSession 基础 ─────────────────────────────
@@ -198,6 +200,18 @@ class TestConstitutionSessionReset:
         # 配置应保留
         assert session.ego_speed == 10.0
         assert session.is_available
+
+
+class TestApiAppFactory:
+    """FastAPI 应用工厂函数测试（可选依赖）。"""
+
+    def test_create_app_returns_fastapi(self):
+        fastapi = pytest.importorskip("fastapi")
+        from aylm.api.app import create_app
+
+        app = create_app()
+        assert isinstance(app, fastapi.FastAPI)
+        assert any(route.path == "/api/v1/health" for route in app.routes)
 
 
 class TestConstitutionSessionJsonSerializable:

@@ -14,7 +14,10 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, ClassVar
+from typing import TYPE_CHECKING, Any, Callable, ClassVar
+import importlib.util
+import subprocess
+import sys
 
 if TYPE_CHECKING:
     from torch.nn import Module
@@ -22,15 +25,60 @@ if TYPE_CHECKING:
     from aylm.tools.object_detector import ObjectDetector
     from aylm.tools.pointcloud_voxelizer import PointCloudVoxelizer
 
-import torch
-from torch.nn import functional as functional_nn
-
 # 模块级常量
 DEFAULT_VOXEL_SIZE = 0.05  # 5cm 体素
 DEFAULT_SLICE_RADIUS = 20.0  # 20m 切片半径
 DEFAULT_FOV_DEGREES = 60.0  # 相机视场角
 
 logger = logging.getLogger(__name__)
+
+_TORCH_PROBE: bool | None = None
+
+
+def _probe_torch_import() -> bool:
+    """安全探测 torch 是否可导入，避免在主进程触发崩溃。"""
+    if importlib.util.find_spec("torch") is None:
+        return False
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", "import torch"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _torch_available() -> bool:
+    global _TORCH_PROBE
+    if _TORCH_PROBE is None:
+        _TORCH_PROBE = _probe_torch_import()
+    return _TORCH_PROBE
+
+
+def _get_torch():
+    """延迟导入 torch，必要时返回 None。"""
+    if not _torch_available():
+        return None
+    try:
+        import torch  # type: ignore
+
+        return torch
+    except Exception:
+        return None
+
+
+def _device_stub(type_name: str):
+    class _Device:
+        def __init__(self, name: str):
+            self.type = name
+
+        def __repr__(self) -> str:
+            return f"device({self.type})"
+
+    return _Device(type_name)
 
 
 class TaskStatus(Enum):
@@ -240,7 +288,7 @@ class PipelineProcessor:
         self.stats = PipelineStats()
 
         self._predictor: Module | None = None
-        self._device: torch.device | None = None
+        self._device: Any | None = None
         self._model_loaded = False
         self._voxelizer: PointCloudVoxelizer | None = None
         self._detector: ObjectDetector | None = None  # YOLO 语义检测器
@@ -276,7 +324,7 @@ class PipelineProcessor:
 
         try:
             if self._predictor is not None:
-                if self._device and self._device.type != "cpu":
+                if self._device and getattr(self._device, "type", "cpu") != "cpu":
                     with contextlib.suppress(Exception):
                         self._predictor.cpu()
                 del self._predictor
@@ -286,7 +334,8 @@ class PipelineProcessor:
             self._model_loaded = False
             gc.collect()
 
-            if torch.cuda.is_available():
+            torch = _get_torch()
+            if torch is not None and torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
 
@@ -355,7 +404,10 @@ class PipelineProcessor:
             self._async_executor = None
         self._async_future = None
 
-    def _detect_device(self) -> torch.device:
+    def _detect_device(self):
+        torch = _get_torch()
+        if torch is None:
+            return _device_stub("cpu")
         if self.config.device != "auto":
             return torch.device(self.config.device)
         if torch.cuda.is_available():
@@ -369,6 +421,11 @@ class PipelineProcessor:
 
         try:
             from sharp.models import PredictorParams, create_predictor
+
+            torch = _get_torch()
+            if torch is None:
+                self.log.error("PyTorch 不可用，无法加载 SHARP 模型")
+                return False
 
             self._device = self._detect_device()
             self.log.info(f"使用设备: {self._device}")
@@ -419,11 +476,15 @@ class PipelineProcessor:
         )
         self.log.info(f"体素化器已初始化 (体素尺寸: {self.config.voxel_size}m)")
 
-    @torch.no_grad()
     def _predict_single(self, task: ImageTask, output_dir: Path) -> bool:
         """对单张图像进行模型推理。"""
         from sharp.utils import io
         from sharp.utils.gaussians import save_ply, unproject_gaussians
+
+        torch = _get_torch()
+        if torch is None:
+            raise RuntimeError("PyTorch 不可用，无法执行推理")
+        functional_nn = torch.nn.functional
 
         task.status = TaskStatus.PREDICTING
         task.predict_start_time = time.time()
@@ -441,48 +502,56 @@ class PipelineProcessor:
             res = self.config.internal_resolution
             internal_shape = (res, res)
             self.log.info(f"    内部处理分辨率: {res}x{res}")
-            image_pt = (
-                torch.from_numpy(image.copy()).float().to(self._device).permute(2, 0, 1)
-                / 255.0
-            )
-            disparity_factor = torch.tensor([f_px / width]).float().to(self._device)
-
-            image_resized_pt = functional_nn.interpolate(
-                image_pt[None],
-                size=(internal_shape[1], internal_shape[0]),
-                mode="bilinear",
-                align_corners=True,
-            )
-
-            # 推理（需要锁保护，因为模型不是线程安全的）
-            with self._predict_lock:
-                assert self._predictor is not None, "模型未加载"
-                gaussians_ndc = self._predictor(image_resized_pt, disparity_factor)
-
-            # 后处理
-            intrinsics = (
-                torch.tensor(
-                    [
-                        [f_px, 0, width / 2, 0],
-                        [0, f_px, height / 2, 0],
-                        [0, 0, 1, 0],
-                        [0, 0, 0, 1],
-                    ]
+            with torch.no_grad():
+                image_pt = (
+                    torch.from_numpy(image.copy())
+                    .float()
+                    .to(self._device)
+                    .permute(2, 0, 1)
+                    / 255.0
                 )
-                .float()
-                .to(self._device)
-            )
+                disparity_factor = (
+                    torch.tensor([f_px / width]).float().to(self._device)
+                )
 
-            intrinsics_resized = intrinsics.clone()
-            intrinsics_resized[0] *= internal_shape[0] / width
-            intrinsics_resized[1] *= internal_shape[1] / height
+                image_resized_pt = functional_nn.interpolate(
+                    image_pt[None],
+                    size=(internal_shape[1], internal_shape[0]),
+                    mode="bilinear",
+                    align_corners=True,
+                )
 
-            gaussians = unproject_gaussians(
-                gaussians_ndc,
-                torch.eye(4).to(self._device),
-                intrinsics_resized,
-                internal_shape,
-            )
+                # 推理（需要锁保护，因为模型不是线程安全的）
+                with self._predict_lock:
+                    assert self._predictor is not None, "模型未加载"
+                    gaussians_ndc = self._predictor(
+                        image_resized_pt, disparity_factor
+                    )
+
+                # 后处理
+                intrinsics = (
+                    torch.tensor(
+                        [
+                            [f_px, 0, width / 2, 0],
+                            [0, f_px, height / 2, 0],
+                            [0, 0, 1, 0],
+                            [0, 0, 0, 1],
+                        ]
+                    )
+                    .float()
+                    .to(self._device)
+                )
+
+                intrinsics_resized = intrinsics.clone()
+                intrinsics_resized[0] *= internal_shape[0] / width
+                intrinsics_resized[1] *= internal_shape[1] / height
+
+                gaussians = unproject_gaussians(
+                    gaussians_ndc,
+                    torch.eye(4).to(self._device),
+                    intrinsics_resized,
+                    internal_shape,
+                )
 
             # 保存PLY
             output_path = output_dir / f"{task.image_path.stem}.ply"

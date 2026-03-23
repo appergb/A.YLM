@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aylm-mlx-vlm"
+version = "0.1.0"
+description = "Optional MLX-VLM training data demo for A-YLM"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "aylm",
+    "mlx-vlm>=0.1.13",
+    "Pillow",
+]
+
+[project.scripts]
+aylm-mlx-train = "aylm_mlx_vlm.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

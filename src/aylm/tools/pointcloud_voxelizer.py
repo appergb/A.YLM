@@ -8,6 +8,9 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+import importlib.util
+import subprocess
+import sys
 
 import numpy as np
 from numpy.typing import NDArray
@@ -24,29 +27,66 @@ except ImportError:
     HAS_OPEN3D = False
     logger.info("Open3D not available, using numpy fallback")
 
-# 尝试导入PyTorch，检测GPU支持
-try:
-    import torch
+HAS_TORCH = False
+HAS_GPU = False
+GPU_DEVICE = "cpu"
+_TORCH_PROBE: bool | None = None
 
-    HAS_TORCH = True
-    # 检测GPU设备
-    if torch.cuda.is_available():
-        GPU_DEVICE = "cuda"
-        HAS_GPU = True
-        logger.info(f"CUDA GPU available: {torch.cuda.get_device_name(0)}")
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        GPU_DEVICE = "mps"
-        HAS_GPU = True
-        logger.info("Apple MPS GPU available")
-    else:
-        GPU_DEVICE = "cpu"
+
+def _probe_torch_import() -> bool:
+    """安全探测 torch 是否可导入，避免在主进程触发崩溃。"""
+    if importlib.util.find_spec("torch") is None:
+        return False
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", "import torch"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _torch_available() -> bool:
+    global _TORCH_PROBE
+    if _TORCH_PROBE is None:
+        _TORCH_PROBE = _probe_torch_import()
+    return _TORCH_PROBE
+
+
+def _get_torch():
+    """延迟导入 torch，必要时返回 None。"""
+    global HAS_TORCH, HAS_GPU, GPU_DEVICE
+    if not _torch_available():
+        HAS_TORCH = False
         HAS_GPU = False
-        logger.info("No GPU available, PyTorch will use CPU")
-except ImportError:
-    HAS_TORCH = False
-    HAS_GPU = False
-    GPU_DEVICE = "cpu"
-    logger.info("PyTorch not available, GPU acceleration disabled")
+        GPU_DEVICE = "cpu"
+        return None
+    try:
+        import torch  # type: ignore
+
+        HAS_TORCH = True
+        if torch.cuda.is_available():
+            GPU_DEVICE = "cuda"
+            HAS_GPU = True
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            GPU_DEVICE = "mps"
+            HAS_GPU = True
+        else:
+            GPU_DEVICE = "cpu"
+            HAS_GPU = False
+        return torch
+    except Exception:
+        HAS_TORCH = False
+        HAS_GPU = False
+        GPU_DEVICE = "cpu"
+        return None
+
+
+# 同步 HAS_TORCH 标记（不触发主进程导入）
+HAS_TORCH = _torch_available()
 
 
 @dataclass
@@ -148,7 +188,8 @@ class PointCloudVoxelizer:
 
     def _get_device(self) -> str:
         """获取计算设备。"""
-        if not self.config.use_gpu or not HAS_GPU:
+        torch = _get_torch()
+        if not self.config.use_gpu or torch is None or not HAS_GPU:
             return "cpu"
 
         device_config = self.config.gpu_device.lower()
@@ -257,6 +298,13 @@ class PointCloudVoxelizer:
 
     def _remove_outliers_gpu(self, pc: PointCloud, cfg: VoxelizerConfig) -> PointCloud:
         """使用PyTorch GPU加速去除离群点。"""
+        torch = _get_torch()
+        if torch is None:
+            logger.warning("PyTorch 不可用，降级为 CPU 去除离群点")
+            if HAS_OPEN3D:
+                return self._remove_outliers_o3d(pc, cfg)
+            return self._remove_outliers_numpy(pc, cfg)
+
         n_points = pc.points.shape[0]
 
         # 对于大点云，GPU内存可能不足，自动降级到CPU
@@ -508,6 +556,11 @@ class PointCloudVoxelizer:
 
         添加法向量方向验证：只接受法向量与Y轴夹角小于阈值的平面。
         """
+        torch = _get_torch()
+        if torch is None:
+            logger.warning("PyTorch 不可用，降级为 CPU 地面检测")
+            return self._detect_ground_numpy(pc, cfg, ground_normal_threshold)
+
         logger.info(f"Using GPU ({self._device}) for ground detection")
         device = torch.device(self._device)
 
@@ -637,6 +690,11 @@ class PointCloudVoxelizer:
 
     def _voxel_downsample_gpu(self, pc: PointCloud) -> PointCloud:
         """使用PyTorch GPU加速进行体素下采样。"""
+        torch = _get_torch()
+        if torch is None:
+            logger.warning("PyTorch 不可用，降级为 CPU 体素下采样")
+            return self._voxel_downsample_numpy(pc)
+
         logger.info(f"Using GPU ({self._device}) for voxel downsampling")
         device = torch.device(self._device)
 
