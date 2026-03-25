@@ -13,7 +13,10 @@ class TestObstacleMarkerBoundingBox:
             ObstacleMarkerConfig(bbox_trim_percentile=0.05, bbox_trim_min_points=20)
         )
         core_points = np.array(
-            [[1.0 + i * 0.01, 2.0 + (i % 5) * 0.01, 3.0 + (i % 7) * 0.01] for i in range(60)],
+            [
+                [1.0 + i * 0.01, 2.0 + (i % 5) * 0.01, 3.0 + (i % 7) * 0.01]
+                for i in range(60)
+            ],
             dtype=np.float64,
         )
         outliers = np.array([[20.0, 2.0, 3.0], [-15.0, 2.0, 3.0]], dtype=np.float64)

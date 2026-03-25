@@ -100,7 +100,9 @@ ignore = [
     "RUF002", # ambiguous unicode in docstring
     "RUF003", # ambiguous unicode in comment
     "RUF022", # __all__ not sorted (按功能分组更清晰)
-    "TC002",  # move import into TYPE_CHECKING (运行时需要)
+    "TC001",  # move application import into TYPE_CHECKING (运行时需要)
+    "TC002",  # move third-party import into TYPE_CHECKING (运行时需要)
+    "TC003",  # move stdlib import into TYPE_CHECKING (运行时需要)
 ]
 
 [tool.ruff.lint.isort]

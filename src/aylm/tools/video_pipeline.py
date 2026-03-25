@@ -5,17 +5,17 @@
 
 import contextlib
 import gc
+import importlib.util
 import logging
 import queue
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
-import importlib.util
-import subprocess
-import sys
 
 import numpy as np
 
@@ -84,6 +84,7 @@ def _device_stub(type_name: str):
             return f"device({self.type})"
 
     return _Device(type_name)
+
 
 # 模块级常量
 DEFAULT_NAV_VOXEL_SIZE = 0.05  # 导航体素大小 5cm
@@ -850,9 +851,7 @@ class VideoPipelineProcessor:
                     .permute(2, 0, 1)
                     / 255.0
                 )
-                disparity_factor = (
-                    torch.tensor([f_px / width]).float().to(self._device)
-                )
+                disparity_factor = torch.tensor([f_px / width]).float().to(self._device)
 
                 image_resized_pt = functional_nn.interpolate(
                     image_pt[None],

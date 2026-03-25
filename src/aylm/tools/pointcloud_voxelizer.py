@@ -4,13 +4,13 @@
 支持GPU加速（CUDA/MPS）和CPU fallback。
 """
 
+import importlib.util
 import logging
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-import importlib.util
-import subprocess
-import sys
 
 import numpy as np
 from numpy.typing import NDArray

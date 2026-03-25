@@ -162,8 +162,7 @@ class TestCalibrationLoopDangerousScenario:
         # 碰撞类违规频繁，collision 权重应增加
         assert ctx.adjusted_weights["collision"] > 1.0
         print(
-            f"  collision 权重从 1.0 增加到 "
-            f"{ctx.adjusted_weights['collision']:.4f}"
+            f"  collision 权重从 1.0 增加到 " f"{ctx.adjusted_weights['collision']:.4f}"
         )
 
     def test_dangerous_session_generates_hints(self):
@@ -175,9 +174,7 @@ class TestCalibrationLoopDangerousScenario:
 
         assert len(ctx.safety_hints) > 0
         # 应包含碰撞相关提示
-        collision_hints = [
-            h for h in ctx.safety_hints if "no_collision" in h.lower()
-        ]
+        collision_hints = [h for h in ctx.safety_hints if "no_collision" in h.lower()]
         assert len(collision_hints) > 0
         print(f"  安全提示 ({len(ctx.safety_hints)}):")
         for hint in ctx.safety_hints[:3]:
@@ -191,9 +188,7 @@ class TestCalibrationLoopDangerousScenario:
         ctx = _simulate_dangerous_session(cal, num_frames=20)
 
         # 纠正提示应传播到安全提示中
-        speed_hints = [
-            h for h in ctx.safety_hints if "speed" in h.lower()
-        ]
+        speed_hints = [h for h in ctx.safety_hints if "speed" in h.lower()]
         assert len(speed_hints) > 0
         print(f"  速度相关纠正提示: {speed_hints[0]}")
 
@@ -272,7 +267,9 @@ class TestCrossSessionLearning:
         )
         ctx1 = _simulate_dangerous_session(cal1, num_frames=20)
         print(f"  会话1 最终阈值: {ctx1.adjusted_threshold:.3f}")
-        print(f"  会话1 collision 权重: {ctx1.adjusted_weights.get('collision', 'N/A')}")
+        print(
+            f"  会话1 collision 权重: {ctx1.adjusted_weights.get('collision', 'N/A')}"
+        )
 
         # 验证存储已保存
         assert store.get_session_count() == 1
@@ -294,8 +291,7 @@ class TestCrossSessionLearning:
         ctx2_initial = cal2.get_context()
         assert ctx2_initial.adjusted_threshold == baseline.threshold
         print(
-            f"  会话2 初始阈值: {ctx2_initial.adjusted_threshold:.3f} "
-            f"(继承自基线)"
+            f"  会话2 初始阈值: {ctx2_initial.adjusted_threshold:.3f} " f"(继承自基线)"
         )
 
         # 第二次运行模拟安全场景
@@ -499,9 +495,7 @@ class TestFullCalibrationFlow:
             f"  校准阈值变化: "
             f"{calibrated_thresholds[0]:.3f} → {calibrated_thresholds[-1]:.3f}"
         )
-        print(
-            f"  最终校准阈值: {final.adjusted_threshold:.3f}"
-        )
+        print(f"  最终校准阈值: {final.adjusted_threshold:.3f}")
         print(f"  collision 权重变化: {final.adjusted_weights.get('collision', 'N/A')}")
 
         # 关键验证：校准器确实做了有意义的调整

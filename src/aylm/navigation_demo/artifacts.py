@@ -68,8 +68,7 @@ class ObstacleSummary:
                 f"- nearest_left_m: {_format_distance(self.nearest_left_m)}",
                 f"- nearest_right_m: {_format_distance(self.nearest_right_m)}",
                 (
-                    "- pipeline_scene_safety_score: "
-                    f"{self.scene_safety_score:.2f}"
+                    "- pipeline_scene_safety_score: " f"{self.scene_safety_score:.2f}"
                     if self.scene_safety_score is not None
                     else "- pipeline_scene_safety_score: unknown"
                 ),
@@ -152,8 +151,10 @@ class NavigationArtifacts:
                 tracked_count += 1
 
             motion = obstacle.get("motion", {})
-            if isinstance(motion, dict) and motion and not motion.get(
-                "is_stationary", True
+            if (
+                isinstance(motion, dict)
+                and motion
+                and not motion.get("is_stationary", True)
             ):
                 dynamic_count += 1
 

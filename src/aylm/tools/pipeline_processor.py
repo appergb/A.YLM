@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import contextlib
 import gc
+import importlib.util
 import logging
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -15,9 +18,6 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, ClassVar
-import importlib.util
-import subprocess
-import sys
 
 if TYPE_CHECKING:
     from torch.nn import Module
@@ -510,9 +510,7 @@ class PipelineProcessor:
                     .permute(2, 0, 1)
                     / 255.0
                 )
-                disparity_factor = (
-                    torch.tensor([f_px / width]).float().to(self._device)
-                )
+                disparity_factor = torch.tensor([f_px / width]).float().to(self._device)
 
                 image_resized_pt = functional_nn.interpolate(
                     image_pt[None],
@@ -524,9 +522,7 @@ class PipelineProcessor:
                 # 推理（需要锁保护，因为模型不是线程安全的）
                 with self._predict_lock:
                     assert self._predictor is not None, "模型未加载"
-                    gaussians_ndc = self._predictor(
-                        image_resized_pt, disparity_factor
-                    )
+                    gaussians_ndc = self._predictor(image_resized_pt, disparity_factor)
 
                 # 后处理
                 intrinsics = (
