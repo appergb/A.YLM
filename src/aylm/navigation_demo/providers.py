@@ -55,6 +55,7 @@ class BaseCommandProposer:
         summary: ObstacleSummary,
         current_speed: float,
         previous_command: dict[str, Any] | None,
+        prompt_suffix: str | None = None,
     ) -> CommandProposal:
         raise NotImplementedError
 
@@ -97,6 +98,7 @@ class HeuristicCommandProposer(BaseCommandProposer):
         summary: ObstacleSummary,
         current_speed: float,
         previous_command: dict[str, Any] | None,
+        prompt_suffix: str | None = None,
     ) -> CommandProposal:
         del frame_paths, previous_command
 
@@ -128,7 +130,7 @@ class HeuristicCommandProposer(BaseCommandProposer):
             command=normalize_command(command, default_target_speed=current_speed),
             raw_text=json.dumps(command, ensure_ascii=False),
             provider=self.provider_name,
-            prompt="heuristic",
+            prompt=f"heuristic\n{prompt_suffix}" if prompt_suffix else "heuristic",
         )
 
 
@@ -162,6 +164,7 @@ class MlxVlmCommandProposer(BaseCommandProposer):
         summary: ObstacleSummary,
         current_speed: float,
         previous_command: dict[str, Any] | None,
+        prompt_suffix: str | None = None,
     ) -> CommandProposal:
         self._ensure_loaded()
 
@@ -173,6 +176,8 @@ class MlxVlmCommandProposer(BaseCommandProposer):
             current_speed=current_speed,
             previous_command=previous_command,
         )
+        if prompt_suffix:
+            prompt = prompt + "\n\n" + prompt_suffix
         images = []
         for frame_path in frame_paths:
             with Image.open(frame_path) as image:
@@ -382,7 +387,9 @@ def _extract_json_payload(text: str) -> dict[str, Any] | None:
     return None
 
 
-def _normalize_control(payload: dict[str, Any], default_target_speed: float) -> dict[str, Any]:
+def _normalize_control(
+    payload: dict[str, Any], default_target_speed: float
+) -> dict[str, Any]:
     steering = _clamp(
         _to_float(payload.get("steering", payload.get("steer", 0.0))),
         -0.6,

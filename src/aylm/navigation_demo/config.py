@@ -31,6 +31,12 @@ class NavigationDemoConfig:
     command_log_name: str = "commands.jsonl"
     render_video: bool = True
 
+    # 自校准配置
+    enable_calibration: bool = True
+    calibration_interval: int = 10
+    violation_count_trigger: int = 5
+    learning_store_path: Path | None = None
+
     def __post_init__(self) -> None:
         self.artifacts_dir = Path(self.artifacts_dir)
         self.output_dir = Path(self.output_dir)
@@ -54,3 +60,9 @@ class NavigationDemoConfig:
             raise ValueError("max_tokens must be >= 1")
         if self.prompt_file is not None:
             self.prompt_file = Path(self.prompt_file)
+        if self.learning_store_path is not None:
+            self.learning_store_path = Path(self.learning_store_path)
+        if self.calibration_interval < 1:
+            raise ValueError("calibration_interval must be >= 1")
+        if self.violation_count_trigger < 1:
+            raise ValueError("violation_count_trigger must be >= 1")

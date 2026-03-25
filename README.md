@@ -375,6 +375,7 @@ While autonomous driving is our primary demonstration, A-YLM's geometric constit
 | 7 | Motion Estimation | Tracked Positions | Velocity / Heading | Dynamic Prediction |
 | 8 | Constitution Evaluation | Scene + Decision | Safety Score + Violations | Geometric Safety Verification |
 | 9 | Feedback Generation | Validation Results | Training Signals | Self-Evolution |
+| 10 | Self-Calibration | Training Signals + Trends | Adjusted Threshold/Weights/Hints | Online Closed-Loop Improvement |
 
 ---
 
@@ -622,6 +623,68 @@ aylm nav-demo -i outputs/video_demo -o outputs/nav_demo --provider heuristic --n
 proposes a short-horizon command, validates it through A-YLM's `CommandValidator`,
 falls back to `alternative_decision` or a safe stop when needed, and can render an
 annotated result video plus JSONL decision logs.
+
+#### Self-Calibration Closed Loop
+
+The navigation demo includes an **online self-calibration system** that forms a local closed loop — the system learns from its own evaluation results and improves within a session and across sessions:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Self-Calibration Closed Loop                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Frame N:                                                                  │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────────────┐     │
+│   │ Proposer │───▶│Validator │───▶│ Training │───▶│ SessionCalibrator│     │
+│   │(+safety  │    │          │    │  Signal  │    │  .record_frame() │     │
+│   │  hints)  │    │          │    │          │    │                  │     │
+│   └──────────┘    └──────────┘    └──────────┘    └────────┬─────────┘     │
+│        ▲                                                    │               │
+│        │              Calibration Context                   │               │
+│        │          ┌─────────────────────────────────────────┘               │
+│        │          │                                                         │
+│        │    ┌─────▼──────┐  ┌────────────┐  ┌──────────────┐               │
+│        │    │  Adjust    │  │   Boost    │  │  Generate   │               │
+│        │    │  Threshold │  │  Weights   │  │  Safety     │               │
+│        │    │  (±0.05)   │  │  (up to 2x)│  │  Hints      │               │
+│        │    └────────────┘  └────────────┘  └──────┬───────┘               │
+│        │                                           │                       │
+│        └───────────────── Frame N+1 ◀──────────────┘                       │
+│                                                                             │
+│   Session End → LearningStore (JSON) → Next Run Starts from Best Baseline  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key behaviors:**
+- **Within a session**: Every 10 frames or 5 violations, the calibrator recalibrates — tightening approval threshold on declining safety trends, boosting scorer weights for frequently violated principles, and injecting safety hints into VLM prompts
+- **Across sessions**: `LearningStore` persists the best-performing calibration configuration to a JSON file; the next run automatically loads and starts from this improved baseline
+- **Prompt injection**: Violation patterns are translated into natural language hints appended to VLM prompts (e.g., "Principle 'no_collision' violated 7 times — increase caution")
+
+Enable calibration (on by default):
+```bash
+# With cross-session learning persistence
+aylm nav-demo -i outputs/video_demo -o outputs/nav_demo \
+  --provider mlx-vlm \
+  --learning-store ~/.aylm/learning_store.json
+
+# Disable calibration
+aylm nav-demo -i outputs/video_demo -o outputs/nav_demo --no-calibration
+```
+
+Calibration results are included in `run_summary.json`:
+```json
+{
+  "calibration": {
+    "rounds": 6,
+    "final_threshold": 0.700,
+    "final_weights": {"collision": 1.749, "ttc": 0.8, "boundary": 0.5},
+    "active_hints": ["Principle 'no_collision' violated 7 times — increase caution"],
+    "violation_summary": "no_collision: 7 violations (35%)",
+    "frames_analyzed": 20
+  }
+}
+```
 
 ### 6.3.2 MLX-VLM Training Signal Export (Optional Module)
 
@@ -1095,7 +1158,10 @@ A.YLM/
 │   │   ├── artifacts.py                # Artifact pairing + scene summarization
 │   │   ├── providers.py                # Heuristic / MLX-VLM command proposers
 │   │   ├── overlay.py                  # Annotated result video renderer
-│   │   └── runner.py                   # End-to-end offline demo orchestration
+│   │   ├── runner.py                   # End-to-end offline demo orchestration
+│   │   ├── calibrator.py              # Session-level self-calibrator (threshold/weight/hint adjustment)
+│   │   ├── learning_store.py          # Cross-session learning persistence (JSON)
+│   │   └── prompt_calibrator.py       # Violation-to-prompt safety hint translator
 │   ├── constitution/                   # Constitutional AI Module
 │   │   ├── base.py                     # ConstitutionPrinciple abstract base
 │   │   ├── evaluator.py               # ConstitutionEvaluator orchestrator
@@ -1148,7 +1214,7 @@ A.YLM/
 │   ├── voxelized/                      # Occupancy Grids + Obstacle JSONs
 │   ├── detections/                     # Detection Results
 │   └── video_output/                   # Video Pipeline Output
-├── tests/                              # Test Suite (382+ tests)
+├── tests/                              # Test Suite (420+ tests)
 ├── run.sh                              # One-Click Execution Script
 └── pyproject.toml                      # Project Configuration
 ```
@@ -1171,7 +1237,7 @@ Current policy:
 ## 10. Future Work
 
 ### 10.1 Advanced Safety Learning
-Implementation of reinforcement learning for adaptive safety boundary optimization.
+Online self-calibration with threshold/weight/hint adjustment is implemented. Future work includes full reinforcement learning for adaptive safety boundary optimization with model fine-tuning.
 
 ### 10.2 Multi-Sensor Fusion
 Integration with LiDAR for enhanced geometric accuracy in safety-critical scenarios.
