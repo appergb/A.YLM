@@ -25,6 +25,9 @@ aylm_env/
 venv/
 .venv/
 ENV/
+.conda/
+.mypy_cache/
+.resume_pdf_env/
 
 # Model files (too large for git)
 models/*.pt
@@ -77,3 +80,13 @@ logs/
 # Temporary docs (not for production)
 docs/requirements_video_processing.md
 docs/
+
+# Unified local-only workspace:
+# keep folder skeleton in git, ignore private/local content
+local_only/**
+!local_only/
+!local_only/README_LOCAL.md
+!local_only/**/
+!local_only/**/.gitkeep
+
+.devfleet-worktrees/

@@ -108,8 +108,8 @@ class NoCollisionPrinciple(ConstitutionPrinciple):
                     min_distance = distance
                     collision_obstacle = obstacle
 
-        # 判断是否碰撞
-        collision = min_distance < self.safety_margin
+        # 判断是否碰撞（bool() 确保为 Python bool 而非 np.bool_）
+        collision = bool(min_distance < self.safety_margin)
 
         return ViolationResult(
             violated=collision,
@@ -128,9 +128,14 @@ class NoCollisionPrinciple(ConstitutionPrinciple):
                 {
                     "action": "avoid",
                     "obstacle_position": (
-                        collision_obstacle.center_robot
+                        collision_obstacle.center_robot.tolist()
                         if hasattr(collision_obstacle, "center_robot")
-                        else None
+                        and hasattr(collision_obstacle.center_robot, "tolist")
+                        else (
+                            collision_obstacle.center_robot
+                            if hasattr(collision_obstacle, "center_robot")
+                            else None
+                        )
                     ),
                 }
                 if collision and collision_obstacle

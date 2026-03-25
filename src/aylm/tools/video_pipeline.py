@@ -5,21 +5,27 @@
 
 import contextlib
 import gc
-import json
+import importlib.util
 import logging
 import queue
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
-import torch
 
 from .motion_estimator import MotionEstimator
-from .object_tracker import MultiObjectTracker, TrackedObject, TrackerConfig
+from .object_tracker import (
+    MultiObjectTracker,
+    TrackedObject,
+    TrackerConfig,
+    _compute_iou,
+)
 from .pointcloud_voxelizer import PointCloudVoxelizer, VoxelizerConfig
 from .video_config import load_or_create_config
 from .video_extractor import VideoExtractor
@@ -30,6 +36,55 @@ from .video_types import (
 )
 
 logger = logging.getLogger(__name__)
+
+_TORCH_PROBE: bool | None = None
+
+
+def _probe_torch_import() -> bool:
+    """安全探测 torch 是否可导入，避免在主进程触发崩溃。"""
+    if importlib.util.find_spec("torch") is None:
+        return False
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", "import torch"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _torch_available() -> bool:
+    global _TORCH_PROBE
+    if _TORCH_PROBE is None:
+        _TORCH_PROBE = _probe_torch_import()
+    return _TORCH_PROBE
+
+
+def _get_torch():
+    """延迟导入 torch，必要时返回 None。"""
+    if not _torch_available():
+        return None
+    try:
+        import torch  # type: ignore
+
+        return torch
+    except Exception:
+        return None
+
+
+def _device_stub(type_name: str):
+    class _Device:
+        def __init__(self, name: str):
+            self.type = name
+
+        def __repr__(self) -> str:
+            return f"device({self.type})"
+
+    return _Device(type_name)
+
 
 # 模块级常量
 DEFAULT_NAV_VOXEL_SIZE = 0.05  # 导航体素大小 5cm
@@ -72,6 +127,11 @@ class VideoPipelineConfig:
     # 运动估计配置
     motion_fps: float = 30.0  # 帧率（用于运动估计）
     motion_stationary_threshold: float = 0.1  # 静止判定阈值（m/s）
+    # 宪法安全评估配置
+    enable_constitution: bool = True  # 是否启用宪法评估
+    constitution_config_path: Path | None = None  # 自定义宪法配置文件路径
+    ego_speed: float = 0.0  # 自车速度 m/s
+    ego_heading: float = 0.0  # 自车航向（弧度）
 
 
 class VideoPipelineProcessor:
@@ -89,20 +149,24 @@ class VideoPipelineProcessor:
         self.config = config or VideoPipelineConfig()
         self.stats = VideoProcessingStats()
         self._predictor = None
-        self._device: torch.device | None = None
+        self._device: Any | None = None
         self._model_loaded = False
         self._voxelizer: PointCloudVoxelizer | None = None
         self._detector = None  # YOLO 语义检测器
         self._tracker: Optional[MultiObjectTracker] = None  # 目标跟踪器
         self._motion_estimator: Optional[MotionEstimator] = None  # 运动估计器
+        self._constitution = None  # 宪法评估集成
         self._frame_queue: queue.Queue[FrameInfo] = queue.Queue(
             maxsize=self.config.frame_queue_size
         )
         self._stop_event = threading.Event()
         self._extraction_done = threading.Event()
 
-    def _detect_device(self) -> torch.device:
+    def _detect_device(self):
         """检测可用设备。"""
+        torch = _get_torch()
+        if torch is None:
+            return _device_stub("cpu")
         if self.config.device != "auto":
             return torch.device(self.config.device)
         if torch.cuda.is_available():
@@ -118,6 +182,11 @@ class VideoPipelineProcessor:
 
         try:
             from sharp.models import PredictorParams, create_predictor
+
+            torch = _get_torch()
+            if torch is None:
+                logger.error("PyTorch 不可用，无法加载 SHARP 模型")
+                return False
 
             self._device = self._detect_device()
             logger.info(f"Using device: {self._device}")
@@ -158,7 +227,7 @@ class VideoPipelineProcessor:
             return
         logger.info("Unloading model...")
         if self._predictor is not None:
-            if self._device and self._device.type != "cpu":
+            if self._device and getattr(self._device, "type", "cpu") != "cpu":
                 with contextlib.suppress(Exception):
                     self._predictor.cpu()
             del self._predictor
@@ -166,7 +235,8 @@ class VideoPipelineProcessor:
         self._device = None
         self._model_loaded = False
         gc.collect()
-        if torch.cuda.is_available():
+        torch = _get_torch()
+        if torch is not None and torch.cuda.is_available():
             torch.cuda.empty_cache()
         logger.info("Model unloaded")
 
@@ -230,6 +300,40 @@ class VideoPipelineProcessor:
             self._motion_estimator.clear()
             del self._motion_estimator
             self._motion_estimator = None
+
+    def _load_constitution(self):
+        """加载宪法评估集成。"""
+        from aylm.tools.constitution_integration import ConstitutionIntegration
+
+        logger.info("Loading constitution evaluator...")
+        config = ConstitutionIntegration.load_config(
+            self.config.constitution_config_path
+        )
+        self._constitution = ConstitutionIntegration(
+            config=config,
+            ego_speed=self.config.ego_speed,
+            ego_heading=self.config.ego_heading,
+        )
+        if self._constitution.is_available:
+            logger.info(
+                "Constitution evaluator ready (ego_speed: %.1fm/s)",
+                self.config.ego_speed,
+            )
+            if self.config.ego_speed == 0.0:
+                logger.warning(
+                    "ego_speed=0.0, 宪法评估假设车辆静止，碰撞检测可能无意义。"
+                    "使用 --ego-speed <速度> 设置自车速度以获得有效评估。"
+                )
+        else:
+            logger.warning(
+                "Constitution evaluator init failed, safety evaluation disabled"
+            )
+
+    def _cleanup_constitution(self):
+        """清理宪法评估集成。"""
+        if self._constitution is not None:
+            del self._constitution
+            self._constitution = None
 
     def _apply_slice(self, ply_path: Path, frame_stem: str) -> Path | None:
         """对点云执行半径切片，只保留摄像机附近的点。
@@ -489,7 +593,7 @@ class VideoPipelineProcessor:
                 best_iou = 0.0
                 best_track = None
                 for track in tracked_objects:
-                    iou = self._compute_iou(det.bbox, track.bbox)
+                    iou = _compute_iou(det.bbox, track.bbox)
                     if iou > best_iou and iou > 0.3:
                         best_iou = iou
                         best_track = track
@@ -571,34 +675,64 @@ class VideoPipelineProcessor:
             "obstacles": obstacles_data,
         }
 
+        # 宪法安全评估
+        if (
+            self._constitution is not None
+            and self._constitution.is_available
+            and obstacles_data
+        ):
+            evaluation = self._constitution.evaluate_frame(
+                obstacles_data=obstacles_data,
+                frame_id=frame_id,
+                timestamp=timestamp,
+            )
+            if evaluation:
+                data["constitution_evaluation"] = evaluation
+                safety = evaluation.get("safety_score", {})
+                overall = safety.get("overall", "N/A")
+                action = safety.get("recommended_action", "unknown")
+                scores = safety.get("scores", {})
+
+                # 详细日志输出
+                logger.info(
+                    "Constitution evaluation: score=%.2f action=%s "
+                    "collision=%.2f ttc=%.2f boundary=%.2f",
+                    overall if isinstance(overall, (int, float)) else 0,
+                    action,
+                    scores.get("collision", 0),
+                    scores.get("ttc", 0),
+                    scores.get("boundary", 0),
+                )
+
+                # 输出各原则结果
+                for name, pr in evaluation.get("principle_results", {}).items():
+                    if not isinstance(pr, dict):
+                        continue
+                    status = "VIOLATED" if pr.get("violated") else "OK"
+                    desc = pr.get("description", "")
+                    logger.info("  [%s] %s: %s", status, name, desc)
+
+                # 输出违规详情（来自 evaluation.violations 字典列表）
+                violation_details = evaluation.get("violations", [])
+                for vd in violation_details:
+                    if isinstance(vd, dict):
+                        logger.warning(
+                            "  VIOLATION: %s (severity=%s)",
+                            vd.get("description", ""),
+                            vd.get("severity", ""),
+                        )
+                    elif isinstance(vd, str):
+                        logger.warning("  VIOLATION: %s", vd)
+
         with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+            from .json_utils import numpy_safe_dump
+
+            numpy_safe_dump(data, f, indent=2, ensure_ascii=False)
 
         logger.info(
             f"Exported {len(obstacles)} obstacles ({tracked_count} tracked) "
             f"to {output_path.name}"
         )
-
-    @staticmethod
-    def _compute_iou(bbox1: np.ndarray, bbox2: np.ndarray) -> float:
-        """计算两个边界框的 IoU。"""
-        x1 = max(bbox1[0], bbox2[0])
-        y1 = max(bbox1[1], bbox2[1])
-        x2 = min(bbox1[2], bbox2[2])
-        y2 = min(bbox1[3], bbox2[3])
-
-        if x2 <= x1 or y2 <= y1:
-            return 0.0
-
-        intersection = (x2 - x1) * (y2 - y1)
-        area1 = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
-        area2 = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
-        union = area1 + area2 - intersection
-
-        if union <= 0:
-            return 0.0
-
-        return float(intersection / union)
 
     def _save_navigation_ply(
         self,
@@ -667,7 +801,6 @@ class VideoPipelineProcessor:
         finally:
             self._extraction_done.set()
 
-    @torch.no_grad()
     def _process_frame(
         self,
         frame_info: FrameInfo,
@@ -692,7 +825,11 @@ class VideoPipelineProcessor:
         """
         from sharp.utils import io
         from sharp.utils.gaussians import save_ply, unproject_gaussians
-        from torch.nn import functional as functional_nn
+
+        torch = _get_torch()
+        if torch is None:
+            raise RuntimeError("PyTorch 不可用，无法处理视频帧")
+        functional_nn = torch.nn.functional
 
         frame_path = frame_info.output_path
         if frame_path is None or not frame_path.exists():
@@ -706,47 +843,51 @@ class VideoPipelineProcessor:
             # 预处理（使用配置的内部分辨率）
             res = self.config.internal_resolution
             internal_shape = (res, res)
-            image_pt = (
-                torch.from_numpy(image.copy()).float().to(self._device).permute(2, 0, 1)
-                / 255.0
-            )
-            disparity_factor = torch.tensor([f_px / width]).float().to(self._device)
-
-            image_resized_pt = functional_nn.interpolate(
-                image_pt[None],
-                size=(internal_shape[1], internal_shape[0]),
-                mode="bilinear",
-                align_corners=True,
-            )
-
-            # 推理
-            assert self._predictor is not None, "Model not loaded"
-            gaussians_ndc = self._predictor(image_resized_pt, disparity_factor)
-
-            # 后处理
-            intrinsics = (
-                torch.tensor(
-                    [
-                        [f_px, 0, width / 2, 0],
-                        [0, f_px, height / 2, 0],
-                        [0, 0, 1, 0],
-                        [0, 0, 0, 1],
-                    ]
+            with torch.no_grad():
+                image_pt = (
+                    torch.from_numpy(image.copy())
+                    .float()
+                    .to(self._device)
+                    .permute(2, 0, 1)
+                    / 255.0
                 )
-                .float()
-                .to(self._device)
-            )
+                disparity_factor = torch.tensor([f_px / width]).float().to(self._device)
 
-            intrinsics_resized = intrinsics.clone()
-            intrinsics_resized[0] *= internal_shape[0] / width
-            intrinsics_resized[1] *= internal_shape[1] / height
+                image_resized_pt = functional_nn.interpolate(
+                    image_pt[None],
+                    size=(internal_shape[1], internal_shape[0]),
+                    mode="bilinear",
+                    align_corners=True,
+                )
 
-            gaussians = unproject_gaussians(
-                gaussians_ndc,
-                torch.eye(4).to(self._device),
-                intrinsics_resized,
-                internal_shape,
-            )
+                # 推理
+                assert self._predictor is not None, "Model not loaded"
+                gaussians_ndc = self._predictor(image_resized_pt, disparity_factor)
+
+                # 后处理
+                intrinsics = (
+                    torch.tensor(
+                        [
+                            [f_px, 0, width / 2, 0],
+                            [0, f_px, height / 2, 0],
+                            [0, 0, 1, 0],
+                            [0, 0, 0, 1],
+                        ]
+                    )
+                    .float()
+                    .to(self._device)
+                )
+
+                intrinsics_resized = intrinsics.clone()
+                intrinsics_resized[0] *= internal_shape[0] / width
+                intrinsics_resized[1] *= internal_shape[1] / height
+
+                gaussians = unproject_gaussians(
+                    gaussians_ndc,
+                    torch.eye(4).to(self._device),
+                    intrinsics_resized,
+                    internal_shape,
+                )
 
             # 保存PLY
             ply_path = ply_output_dir / f"{frame_path.stem}.ply"
@@ -872,6 +1013,12 @@ class VideoPipelineProcessor:
             if self.config.verbose:
                 logger.info("Object tracking: ENABLED")
 
+        # 加载宪法评估器（如果启用）
+        if self.config.enable_constitution:
+            self._load_constitution()
+            if self.config.verbose:
+                logger.info("Constitution evaluation: ENABLED")
+
         self._stop_event.clear()
         self._extraction_done.clear()
         self._frame_queue = queue.Queue(maxsize=self.config.frame_queue_size)
@@ -937,6 +1084,7 @@ class VideoPipelineProcessor:
             self._unload_model()
             self._cleanup_detector()
             self._cleanup_tracker()
+            self._cleanup_constitution()
 
         if self.config.verbose:
             logger.info("=" * 50)
@@ -951,6 +1099,8 @@ class VideoPipelineProcessor:
                 logger.info("  Semantic detection: ENABLED")
             if self.config.enable_tracking:
                 logger.info("  Object tracking: ENABLED")
+            if self.config.enable_constitution:
+                logger.info("  Constitution evaluation: ENABLED")
             if navigation_dir:
                 logger.info(f"  Navigation PLY: {navigation_dir}")
             logger.info("=" * 50)
@@ -963,6 +1113,7 @@ class VideoPipelineProcessor:
         self._unload_model()
         self._cleanup_detector()
         self._cleanup_tracker()
+        self._cleanup_constitution()
         self._voxelizer = None
 
 

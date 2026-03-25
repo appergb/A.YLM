@@ -3,14 +3,14 @@
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11/3.12](https://img.shields.io/badge/python-3.11%2F3.12-blue.svg)](https://www.python.org/downloads/)
 [![arXiv](https://img.shields.io/badge/arXiv-2026.xxxxx-b31b1b.svg)](https://arxiv.org)
 
 **Self-Supervised Safety Framework | Autonomous Driving | Robotics | Embodied AI**
 
 *Extending Anthropic's Constitutional AI paradigm from language to the physical world*
 
-[Paper](#) | [Documentation](#) | [Demo](#) | [中文文档](docs/paper_aylm_zh.md)
+[Paper](#) | [Documentation](#) | [Demo](#) | [中文文档](#)
 
 </div>
 
@@ -48,7 +48,7 @@ The core philosophy: **AI needs physical laws, not just language rules**. While 
 - **Universal Applicability**: Not just autonomous driving — all embodied AI systems (robotics, drones, AR/VR, humanoids)
 - **Edge-Deployable**: Real-time geometric supervision on resource-constrained devices
 
-The system pipeline: **Sensor Input → 3DGS Reconstruction → Voxelization → Constitutional Validation → Geometric Feedback → Self-Learning**.
+The system pipeline: **Sensor Input → 3DGS Reconstruction → Voxelization → Semantic Fusion → Object Tracking → Motion Estimation → Constitutional Validation → Training Signal → Self-Learning**.
 
 ---
 
@@ -172,21 +172,54 @@ A-YLM provides a **standalone local safety decision module** that can be called 
 - **API-Ready**: Simple Python API for integration
 
 ```python
-# Example: Using A-YLM as a safety module
-from aylm.safety import SafetyModule
+# Example 1: CommandValidator — 验证外部指令安全性
+from aylm.constitution import CommandValidator
 
-safety = SafetyModule()
+validator = CommandValidator()
 
-# Get safety score for an AI decision
-result = safety.evaluate(
-    camera_frame=frame,
-    ai_decision={"steering": 0.1, "acceleration": 0.5}
+# 验证 JSON 轨迹
+result = validator.validate(
+    command={"type": "trajectory", "points": [[5, 0, 0, 0.5]]},
+    ego_speed=10.0,
+    obstacles=[{"center_robot": [5, 0, 0], "dimensions_robot": [1, 1, 1],
+                "_label": "PERSON", "confidence": 0.9}],
 )
+print(f"Approved: {result.approved}")        # True/False
+print(f"Safety Score: {result.safety_score}") # 0.0 ~ 1.0
+print(f"Action: {result.recommended_action}") # 'emergency_stop'
+print(f"Reason: {result.reason}")             # 人类可读原因
 
-print(f"Safety Score: {result.score}")  # 0.0 ~ 1.0
-print(f"Violations: {result.violations}")  # ['ttc_warning']
-print(f"Recommended: {result.action}")  # 'reduce_speed'
-print(f"Training Signal: {result.training_label}")  # For cloud AI
+# 验证自然语言指令（中/英文）
+result = validator.validate(
+    command="向左转弯30度",
+    ego_speed=10.0,
+    obstacles=[...],
+)
+if not result.approved:
+    print(f"否决: {result.reason}")
+    print(f"安全替代: {result.alternative_decision}")
+
+# Example 2: ConstitutionSession — 有状态的多帧时序评估
+from aylm.api import ConstitutionSession
+
+session = ConstitutionSession(ego_speed=10.0)
+
+# 单帧评估
+result = session.evaluate(obstacles=[...])
+print(f"Safety: {result['safety_score']}, Trend: {result['trend']}")
+
+# 动态修改自车速度
+session.update_ego(speed=15.0, heading=0.1)
+
+# 批量时序评估
+results = session.evaluate_batch([
+    {"obstacles": [...], "ego_speed": 10.0, "timestamp": 0.0},
+    {"obstacles": [...], "ego_speed": 12.0, "timestamp": 0.5},
+])
+
+# 会话趋势分析
+print(session.trend)    # "improving" / "declining" / "stable"
+print(session.summary)  # 统计摘要
 ```
 
 ```
@@ -338,8 +371,11 @@ While autonomous driving is our primary demonstration, A-YLM's geometric constit
 | 3 | Ground Removal | Voxel Grid | Filtered Grid | Obstacle Isolation |
 | 4 | Object Detection | RGB Image | 2D Bounding Boxes | Semantic Understanding |
 | 5 | Semantic Fusion | 2D + 3D | Labeled Point Cloud | Safety Context |
-| 6 | Safety Validation | Semantic 3D | Safety Decisions | Geometric Verification |
-| 7 | Feedback Generation | Validation Results | Learning Signals | Self-Evolution |
+| 6 | Object Tracking | Multi-frame Obstacles | Tracked Obstacles (IDs) | Temporal Association |
+| 7 | Motion Estimation | Tracked Positions | Velocity / Heading | Dynamic Prediction |
+| 8 | Constitution Evaluation | Scene + Decision | Safety Score + Violations | Geometric Safety Verification |
+| 9 | Feedback Generation | Validation Results | Training Signals | Self-Evolution |
+| 10 | Self-Calibration | Training Signals + Trends | Adjusted Threshold/Weights/Hints | Online Closed-Loop Improvement |
 
 ---
 
@@ -368,7 +404,7 @@ A-YLM is designed for **edge deployment** alongside E2E models:
 | Representation | Data Size | Inference Complexity |
 |----------------|-----------|----------------------|
 | Raw 3DGS | ~500K Gaussians | O(n²) rendering |
-| Voxel Grid (5cm) | ~50K voxels | O(n) lookup |
+| Voxel Grid (voxel representation) | ~50K voxels | O(n) lookup |
 | Sparse Voxel | ~10K occupied | O(k) where k << n |
 
 This compression enables **real-time safety validation** on edge computing platforms.
@@ -405,36 +441,62 @@ We leverage Apple's **SHARP** model for efficient 3D reconstruction:
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| Python | 3.9+ (3.11 recommended) | Runtime |
+| Python | 3.11/3.12 (for `run.sh`) | Runtime |
 | PyTorch | 2.0+ | Deep Learning Framework |
-| Open3D | 0.17+ | Point Cloud Processing |
+| Open3D | 0.18+ | Point Cloud Processing |
 | Ultralytics | 8.0+ | YOLO Object Detection |
 | NumPy | 1.24+ | Numerical Computing |
+| SciPy | 1.10+ | Hungarian Algorithm (Tracking) |
+| FastAPI | 0.100+ (optional) | HTTP/WebSocket API Server |
+| uvicorn | 0.20+ (optional) | ASGI Server |
 
 ---
 
 ## 5. Installation
 
-### 5.1 Quick Start
+### 5.1 Standard macOS GPU Environment
+
+Current recommended environment on Apple Silicon is the project-scoped conda GPU environment:
+
+- Path: `.conda/aylm-macos-mps`
+- Backend: `PyTorch MPS`
+- Python: `3.11`
+
+Create or repair it with:
+
+```bash
+chmod +x scripts/setup_macos_gpu_env.sh
+./scripts/setup_macos_gpu_env.sh
+```
+
+Activate it manually with:
+
+```bash
+eval "$(/opt/homebrew/Caskroom/miniforge/base/bin/conda shell.zsh hook)"
+conda activate "$(pwd)/.conda/aylm-macos-mps"
+```
+
+### 5.2 Quick Start
 
 ```bash
 # Clone repository with submodules
 git clone --recursive https://github.com/appergb/A.YLM.git
 cd A.YLM
 
-# Create virtual environment (Python 3.11 recommended)
-python3.11 -m venv aylm_env
-source aylm_env/bin/activate
+# Build the standard GPU environment
+./scripts/setup_macos_gpu_env.sh
 
-# Install core dependencies
-pip install -e .
-pip install -e ml-sharp/
+# Activate it
+eval "$(/opt/homebrew/Caskroom/miniforge/base/bin/conda shell.zsh hook)"
+conda activate "$(pwd)/.conda/aylm-macos-mps"
 
-# Install full feature set
-pip install -e ".[full]"
+# Check environment
+./run.sh --check-only
 ```
 
-### 5.2 Model Setup
+For non-macOS or CPU-only workflows, a plain `venv` is still possible, but it is no longer the primary recommended setup on Apple Silicon.
+
+### 5.3 Model Setup
 
 ```bash
 # SHARP model (~2.8GB) - auto-downloads on first use
@@ -450,9 +512,34 @@ python -c "from ultralytics import YOLO; YOLO('yolo11n-seg.pt')"
 
 ### 6.1 One-Click Execution
 
+Before running `./run.sh`, ensure:
+
+- Clone with submodules (`ml-sharp` is required):
+  - `git clone --recursive https://github.com/appergb/A.YLM.git`
+  - or `git submodule update --init --recursive`
+- The standard environment exists at `.conda/aylm-macos-mps`
+- Python 3.11 or 3.12 is available (`run.sh` enforces this range)
+- First-time dependency/model install can access network
+- Default auto mode needs real files in `inputs/input_images` or `inputs/videos`
+
+`run.sh` priority is:
+
+1. Currently activated supported conda environment
+2. Project standard conda environment `.conda/aylm-macos-mps`
+3. Existing project `venv` / `aylm_env`
+
 ```bash
+# Environment preflight only
+./run.sh --check-only
+
+# Constitution demo (no image/video required)
+./run.sh --demo
+
 # Complete safety validation workflow
 ./run.sh
+
+# Explicit video run with GPU path
+./run.sh --video -i inputs/videos/IMG_6769.MOV -o outputs/video_output --use-gpu
 
 # Custom input directory
 ./run.sh --input /path/to/images
@@ -478,6 +565,18 @@ aylm process -v
 
 # Stage 4: Parallel Pipeline (Multi-image)
 aylm pipeline -i inputs/input_images -o outputs/output_gaussians -v
+
+# Stage 5: Constitution Evaluation Demo (独立宪法评估演示)
+aylm demo --ego-speed 10.0
+
+# Stage 6: Offline Navigation Demo (A-YLM artifacts + command proposer + safety gate)
+aylm nav-demo -i outputs/video_output -o outputs/nav_demo --provider heuristic --no-render
+
+# Stage 7: Constitution API Server (宪法评估 HTTP/WebSocket 服务)
+aylm serve --port 8000 --ego-speed 10.0
+
+# Stage 8: Multi-frame Point Cloud Fusion (多帧点云配准融合)
+aylm fuse -i outputs/output_gaussians -o outputs/fused --voxel-size 0.02
 ```
 
 ### 6.3 Video Processing
@@ -486,12 +585,141 @@ aylm pipeline -i inputs/input_images -o outputs/output_gaussians -v
 # Frame extraction
 aylm video extract -i video.mp4 -o frames/ --interval 1.0
 
-# Full video pipeline (extract + inference + voxelize + tracking)
-aylm video process -i video.mp4 -o output/ --use-gpu
+# Full video pipeline (extract + inference + voxelize + tracking + constitution)
+aylm video process -i video.mp4 -o output/ --use-gpu --ego-speed 10.0
 
 # Visualization playback
 aylm video play -i voxels/ --fps 10 --loop
 ```
+
+### 6.3.1 Offline Navigation Demo
+
+The new offline navigation demo keeps the original video pipeline unchanged and consumes
+its artifacts afterward. This is the intended low-risk path for a local Apple Silicon
+demo:
+
+```bash
+# 1) Run the A-YLM video pipeline first
+aylm video process -i demo.mp4 -o outputs/video_demo --use-gpu --ego-speed 1.0
+
+# 2) Install the optional MLX-VLM dependency for the command proposer
+pip install -e ".[navdemo]"
+
+# 3) Run the offline navigation demo with MLX-VLM + A-YLM validation
+aylm nav-demo \
+  -i outputs/video_demo \
+  -o outputs/nav_demo \
+  --provider mlx-vlm \
+  --model mlx-community/SmolVLM2-500M-Video-Instruct-mlx \
+  --window-size 4 \
+  --window-stride 2 \
+  --ego-speed 1.0
+
+# Safe smoke test without MLX-VLM
+aylm nav-demo -i outputs/video_demo -o outputs/nav_demo --provider heuristic --no-render
+```
+
+`aylm nav-demo` reads `extracted_frames/` plus `voxelized/vox_frame_*_obstacles.json`,
+proposes a short-horizon command, validates it through A-YLM's `CommandValidator`,
+falls back to `alternative_decision` or a safe stop when needed, and can render an
+annotated result video plus JSONL decision logs.
+
+#### Self-Calibration Closed Loop
+
+The navigation demo includes an **online self-calibration system** that forms a local closed loop — the system learns from its own evaluation results and improves within a session and across sessions:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Self-Calibration Closed Loop                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Frame N:                                                                  │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────────────┐     │
+│   │ Proposer │───▶│Validator │───▶│ Training │───▶│ SessionCalibrator│     │
+│   │(+safety  │    │          │    │  Signal  │    │  .record_frame() │     │
+│   │  hints)  │    │          │    │          │    │                  │     │
+│   └──────────┘    └──────────┘    └──────────┘    └────────┬─────────┘     │
+│        ▲                                                    │               │
+│        │              Calibration Context                   │               │
+│        │          ┌─────────────────────────────────────────┘               │
+│        │          │                                                         │
+│        │    ┌─────▼──────┐  ┌────────────┐  ┌──────────────┐               │
+│        │    │  Adjust    │  │   Boost    │  │  Generate   │               │
+│        │    │  Threshold │  │  Weights   │  │  Safety     │               │
+│        │    │  (±0.05)   │  │  (up to 2x)│  │  Hints      │               │
+│        │    └────────────┘  └────────────┘  └──────┬───────┘               │
+│        │                                           │                       │
+│        └───────────────── Frame N+1 ◀──────────────┘                       │
+│                                                                             │
+│   Session End → LearningStore (JSON) → Next Run Starts from Best Baseline  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key behaviors:**
+- **Within a session**: Every 10 frames or 5 violations, the calibrator recalibrates — tightening approval threshold on declining safety trends, boosting scorer weights for frequently violated principles, and injecting safety hints into VLM prompts
+- **Across sessions**: `LearningStore` persists the best-performing calibration configuration to a JSON file; the next run automatically loads and starts from this improved baseline
+- **Prompt injection**: Violation patterns are translated into natural language hints appended to VLM prompts (e.g., "Principle 'no_collision' violated 7 times — increase caution")
+
+Enable calibration (on by default):
+```bash
+# With cross-session learning persistence
+aylm nav-demo -i outputs/video_demo -o outputs/nav_demo \
+  --provider mlx-vlm \
+  --learning-store ~/.aylm/learning_store.json
+
+# Disable calibration
+aylm nav-demo -i outputs/video_demo -o outputs/nav_demo --no-calibration
+```
+
+Calibration results are included in `run_summary.json`:
+```json
+{
+  "calibration": {
+    "rounds": 6,
+    "final_threshold": 0.700,
+    "final_weights": {"collision": 1.749, "ttc": 0.8, "boundary": 0.5},
+    "active_hints": ["Principle 'no_collision' violated 7 times — increase caution"],
+    "violation_summary": "no_collision: 7 violations (35%)",
+    "frames_analyzed": 20
+  }
+}
+```
+
+### 6.3.2 MLX-VLM Training Signal Export (Optional Module)
+
+Training signal export is packaged as a **separate optional module** so the main
+project stays lightweight. Install it only when you want MLX-VLM evaluation and
+training-data generation:
+
+```bash
+# 1) Install the optional module (brings in mlx-vlm only when needed)
+cd extensions/aylm_mlx_vlm
+pip install -e .
+
+# 2) Run MLX-VLM demo + training signal export
+aylm-mlx-train -i outputs/video_demo -o outputs/nav_demo
+```
+
+This produces `commands.jsonl` (navigation decisions) and `training_signals.jsonl`
+for downstream training or analysis.
+
+One-click script (auto-activates env + installs optional module when needed):
+
+```bash
+scripts/run_mlx_demo.sh -i demo.mp4
+```
+
+If you omit `-i`, the script will automatically pick the first video under `inputs/`.
+
+You can also point it at an existing artifacts directory:
+
+```bash
+scripts/run_mlx_demo.sh -i outputs/video_demo --skip-video
+```
+
+If MLX-VLM is not installed, the script falls back to `nav-demo` with the
+heuristic provider and still exports `training_signals.jsonl`.
 
 ### 6.4 Python API
 
@@ -537,6 +765,210 @@ results = processor.run_pipeline(
 )
 ```
 
+### 6.5 Constitution Module API
+
+A-YLM provides a **plugin-based Constitutional AI module** with 5 built-in safety principles. External systems (LLM, end-to-end models, ROS) can validate their decisions against geometric safety constraints.
+
+#### 6.5.1 CommandValidator — 指令安全验证
+
+```python
+from aylm.constitution import CommandValidator
+
+validator = CommandValidator()
+
+# ── JSON 轨迹验证 ──
+result = validator.validate(
+    command={"type": "trajectory", "points": [[5, 0, 0, 0.5]]},
+    ego_speed=10.0,
+    obstacles=[{
+        "center_robot": [5, 0, 0],
+        "dimensions_robot": [1, 1, 1],
+        "_label": "PERSON",
+        "confidence": 0.9,
+    }],
+)
+print(result.approved)           # False (collision risk)
+print(result.safety_score)       # 0.61
+print(result.recommended_action) # "emergency_stop"
+print(result.reason)             # 人类可读原因
+print(result.alternative_decision)  # 安全替代方案
+
+# ── 控制指令验证 ──
+result = validator.validate(
+    command={"type": "control", "steering": 0.1, "throttle": 0.5, "brake": 0.0},
+    ego_speed=10.0,
+)
+
+# ── 航点验证 ──
+result = validator.validate(
+    command={"type": "waypoint", "target": [10, 3, 0], "speed": 5.0},
+    ego_speed=10.0,
+)
+
+# ── 自然语言验证（中文 + 英文） ──
+result = validator.validate(command="向左转弯30度", ego_speed=10.0, obstacles=[...])
+result = validator.validate(command="emergency brake", ego_speed=15.0)
+result = validator.validate(command="加速到60km/h", ego_speed=10.0)
+result = validator.validate(command="change lane right", ego_speed=12.0)
+```
+
+**Supported Command Types:**
+
+| Type | Format | Examples |
+|------|--------|---------|
+| **Trajectory** | `{"type": "trajectory", "points": [[x,y,z,t], ...]}` | 轨迹点序列 |
+| **Control** | `{"type": "control", "steering": 0.1, "throttle": 0.5}` | 控制信号 |
+| **Waypoint** | `{"type": "waypoint", "target": [x,y,z], "speed": 5.0}` | 目标点 |
+| **Natural Language** | `"向左转弯"` / `"emergency brake"` / `"加速到60"` | 中英文自然语言 |
+
+#### 6.5.2 ConstitutionSession — 有状态时序评估
+
+```python
+from aylm.api import ConstitutionSession
+
+session = ConstitutionSession(ego_speed=10.0)
+
+# 单帧评估
+result = session.evaluate(
+    obstacles=[{"center_robot": [5,0,0], "dimensions_robot": [1,1,1],
+                "_label": "VEHICLE", "confidence": 0.9}],
+)
+
+# 动态修改速度/航向
+session.update_ego(speed=15.0, heading=0.1)
+
+# 带指令的评估
+result = session.evaluate(
+    command={"type": "trajectory", "points": [[3,0,0,0.5]]},
+    obstacles=[...],
+)
+
+# 批量时序评估
+results = session.evaluate_batch([
+    {"obstacles": [...], "ego_speed": 10.0, "timestamp": 0.0},
+    {"obstacles": [...], "ego_speed": 12.0, "timestamp": 0.5},
+])
+
+# 安全趋势分析
+print(session.trend)    # "improving" / "declining" / "stable" / "unknown"
+print(session.summary)  # {"avg_score": 0.7, "approval_rate": 0.8, ...}
+```
+
+#### 6.5.3 Custom Principle Plugin — 自定义宪法原则
+
+```python
+from aylm.constitution import ConstitutionPrinciple, ViolationResult, Severity
+from aylm.constitution import ConstitutionRegistry
+
+@ConstitutionRegistry.register_principle("my_custom_rule")
+class MyCustomPrinciple(ConstitutionPrinciple):
+    """自定义安全规则。"""
+
+    @property
+    def name(self) -> str:
+        return "my_custom_rule"
+
+    @property
+    def severity(self) -> Severity:
+        return Severity.HIGH
+
+    def evaluate(self, scene, decision) -> ViolationResult:
+        # 实现您的安全检查逻辑
+        return ViolationResult(violated=False, severity=self.severity, ...)
+```
+
+#### 6.5.4 Built-in Safety Principles
+
+| Principle | Description | Severity |
+|-----------|-------------|----------|
+| `NoCollisionPrinciple` | 碰撞检测：检查轨迹点与障碍物的最小距离 | CRITICAL |
+| `SafeFollowingPrinciple` | 安全跟车距离：基于速度的动态跟车距离验证 | HIGH |
+| `TTCSafetyPrinciple` | TTC (Time-to-Collision) 安全：碰撞时间估算 | HIGH |
+| `LaneCompliancePrinciple` | 车道合规：车道偏移检测 | MEDIUM |
+| `SpeedLimitPrinciple` | 速度限制：超速检测 | MEDIUM |
+
+### 6.6 HTTP API Server
+
+Install API dependencies:
+
+```bash
+pip install -e ".[api]"   # or: pip install fastapi uvicorn
+```
+
+Start the server:
+
+```bash
+aylm serve --port 8000 --ego-speed 10.0
+# API docs: http://localhost:8000/docs
+```
+
+#### REST Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/health` | 健康检查 |
+| `POST` | `/api/v1/evaluate` | 单帧安全评估 |
+| `POST` | `/api/v1/evaluate/batch` | 批量时序评估 |
+| `PUT` | `/api/v1/ego` | 动态修改自车速度/航向 |
+| `GET` | `/api/v1/summary` | 会话统计摘要 |
+| `GET` | `/api/v1/config` | 查看当前配置 |
+| `WS` | `/api/v1/session` | WebSocket 实时流式评估 |
+
+#### Example: Single-frame Evaluation
+
+```bash
+curl -X POST http://localhost:8000/api/v1/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "obstacles": [
+      {"center_robot": [5,0,0], "dimensions_robot": [1,1,1],
+       "_label": "PERSON", "confidence": 0.9}
+    ],
+    "command": "向左转弯",
+    "ego_speed": 10.0
+  }'
+```
+
+#### Example: Dynamic Speed Update
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/ego \
+  -H "Content-Type: application/json" \
+  -d '{"speed": 15.0, "heading": 0.1}'
+```
+
+### 6.7 WebSocket Real-time Streaming
+
+```python
+import asyncio
+import json
+import websockets
+
+async def realtime_evaluation():
+    async with websockets.connect("ws://localhost:8000/api/v1/session") as ws:
+        # 发送评估帧
+        await ws.send(json.dumps({
+            "obstacles": [{"center_robot": [5,0,0], "dimensions_robot": [1,1,1],
+                           "_label": "VEHICLE", "confidence": 0.9}],
+            "ego_speed": 10.0,
+        }))
+        result = json.loads(await ws.recv())
+        print(f"Score: {result['safety_score']}, Approved: {result['approved']}")
+
+        # 动态修改速度
+        await ws.send(json.dumps({"action": "update_ego", "speed": 15.0}))
+        ack = json.loads(await ws.recv())
+
+        # 获取会话摘要
+        await ws.send(json.dumps({"action": "summary"}))
+        summary = json.loads(await ws.recv())
+
+        # 重置会话
+        await ws.send(json.dumps({"action": "reset"}))
+
+asyncio.run(realtime_evaluation())
+```
+
 ---
 
 ## 7. Output Specification
@@ -547,39 +979,71 @@ results = processor.run_pipeline(
 |--------------|--------|-------------|
 | `*.ply` | PLY | Raw 3DGS point cloud from SHARP |
 | `vox_*.ply` | PLY | Voxelized point cloud with semantic colors |
-| `nav_*.ply` | PLY | Safety validation mesh (5cm solid cubes) |
+| `nav_*.ply` | PLY | Safety validation mesh (voxel cubes) |
 | `*_obstacles.json` | JSON | Structured obstacle data for safety validation |
 
 ### 7.2 Safety Validation JSON Schema
 
 ```json
 {
-  "metadata": {
-    "timestamp": "2026-02-27T10:30:00Z",
-    "frame_id": 42,
-    "coordinate_systems": {
-      "cv": {"axes": "X-right, Y-down, Z-forward"},
-      "robot": {"axes": "X-forward, Y-left, Z-up (ENU)"}
-    }
+  "frame_id": 2,
+  "timestamp": 1.984,
+  "coordinate_systems": {
+    "cv": {"description": "OpenCV/相机坐标系", "axes": "X右, Y下, Z前"},
+    "robot": {"description": "机器人/ROS坐标系", "axes": "X前, Y左, Z上"},
+    "transform": "X_robot=Z_cv, Y_robot=-X_cv, Z_robot=-Y_cv"
   },
+  "total_count": 2,
+  "movable_count": 2,
+  "static_count": 0,
+  "tracked_count": 2,
   "obstacles": [
     {
-      "id": 1,
-      "type": "dynamic",
-      "category": "vehicle",
-      "center_cv": [10.32, 0.06, 0.21],
-      "center_robot": [0.21, -10.32, -0.06],
-      "dimensions": [7.52, 3.36, 2.26],
-      "velocity": [2.5, 0.0, 0.1],
-      "ttc": 4.2,
-      "confidence": 0.93,
-      "safety_status": "warning"
+      "type": "可运动障碍物",
+      "category": "行人",
+      "movable": true,
+      "center_cv": [x, y, z],
+      "center_robot": [x, y, z],
+      "dimensions_cv": [w, h, d],
+      "dimensions_robot": [w, h, d],
+      "confidence": 0.875,
+      "point_count": 56521,
+      "_label": "PERSON",
+      "track_id": 1,
+      "track_age": 3,
+      "track_hits": 3
     }
   ],
-  "safety_summary": {
-    "overall_status": "safe",
-    "collision_risk": 0.15,
-    "geometric_violations": []
+  "constitution_evaluation": {
+    "safety_score": {
+      "overall": 0.6087,
+      "scores": {"collision": 0.1, "ttc": 1.0, "boundary": 1.0},
+      "violations": ["no_collision"],
+      "recommended_action": "emergency_stop",
+      "confidence": 1.0
+    },
+    "violations": [
+      {
+        "violated": true,
+        "severity": "CRITICAL",
+        "description": "检测到碰撞风险，最小距离 -0.95m",
+        "metrics": {"min_distance": -0.95, "safety_margin": 0.5},
+        "correction_hint": {"action": "avoid", "obstacle_position": [x, y, z]}
+      }
+    ],
+    "principle_results": {
+      "no_collision": {"violated": true, "severity": "CRITICAL", "...": "..."},
+      "safe_following": {"violated": false, "severity": "HIGH", "...": "..."},
+      "ttc_safety": {"violated": false, "severity": "HIGH", "...": "..."},
+      "lane_compliance": {"violated": false, "severity": "MEDIUM", "...": "..."},
+      "speed_limit": {"violated": false, "severity": "MEDIUM", "...": "..."}
+    },
+    "training_signal": {
+      "signal_type": "correction",
+      "scene_context": {"ego_state": {"speed": 10.0}, "obstacles": ["..."]},
+      "ai_decision": {"trajectory": ["..."], "target_speed": 10.0},
+      "correction_target": {"corrections": [{"action": "avoid"}]}
+    }
   }
 }
 ```
@@ -622,12 +1086,59 @@ export CUDA_VISIBLE_DEVICES="0"  # GPU selection
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `DEFAULT_VOXEL_SIZE` | 0.05 | Safety validation voxel size (5cm) |
+| `DEFAULT_VOXEL_SIZE` | 0.05 | Safety validation voxel size (voxel) |
 | `DEFAULT_SLICE_RADIUS` | 20.0 | Processing radius (meters) |
 | `DEFAULT_FOV_DEGREES` | 60.0 | Camera field of view |
 | `DEFAULT_DENSITY_THRESHOLD` | 3 | Minimum points per voxel |
 | `TTC_WARNING_THRESHOLD` | 3.0 | Time-to-collision warning (seconds) |
 | `TTC_CRITICAL_THRESHOLD` | 1.5 | Time-to-collision critical (seconds) |
+
+### 8.4 Constitution Evaluation Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `approval_threshold` | 0.6 | Safety score threshold for approving decisions |
+| `collision_safety_margin` | 0.5 | Minimum safe distance to obstacles (meters) |
+| `following_time_headway` | 2.0 | Minimum following time headway (seconds) |
+| `speed_limit_default` | 13.89 | Default speed limit (m/s, ~50 km/h) |
+| `lane_max_offset` | 1.75 | Maximum lane deviation (meters) |
+
+### 8.5 Constitution Config File (YAML)
+
+Constitution evaluation can be configured via YAML or JSON:
+
+```yaml
+# configs/constitution_example.yaml
+principles:
+  no_collision:
+    enabled: true
+    params:
+      safety_margin: 0.5
+  safe_following:
+    enabled: true
+    params:
+      time_headway: 2.0
+  ttc_safety:
+    enabled: true
+    params:
+      warning_threshold: 3.0
+      critical_threshold: 1.5
+  lane_compliance:
+    enabled: true
+  speed_limit:
+    enabled: true
+    params:
+      default_limit_kmh: 50
+
+scorer:
+  type: weighted
+  weights:
+    collision: 1.0
+    following: 0.8
+    ttc: 0.8
+    lane: 0.5
+    speed: 0.5
+```
 
 ---
 
@@ -635,38 +1146,98 @@ export CUDA_VISIBLE_DEVICES="0"  # GPU selection
 
 ```
 A.YLM/
-├── src/aylm/                        # Core Package
-│   ├── cli.py                       # Command Line Interface
-│   └── tools/                       # Processing Modules
-│       ├── pointcloud_voxelizer.py  # Occupancy 2.0 Voxelization
-│       ├── pipeline_processor.py    # Parallel Pipeline Orchestration
-│       ├── video_pipeline.py        # Video Sequence Processing
-│       ├── semantic_fusion.py       # 2D→3D Semantic Projection
-│       ├── object_detector.py       # YOLO Instance Segmentation
-│       ├── obstacle_marker.py       # DBSCAN Obstacle Clustering
-│       ├── pointcloud_slicer.py     # Spatial ROI Extraction
-│       └── coordinate_utils.py      # CV↔Robot Coordinate Transform
-├── ml-sharp/                        # Apple SHARP Model (submodule)
-├── models/                          # Model Checkpoints
-├── inputs/                          # Input Data
-│   ├── input_images/                # RGB Images
-│   └── videos/                      # Video Files
-├── outputs/                         # Output Data
-│   ├── output_gaussians/            # 3DGS Point Clouds
-│   ├── voxelized/                   # Occupancy Grids
-│   ├── detections/                  # Detection Results
-│   └── safety_validation/           # Safety Validation Results
-├── tests/                           # Test Suite
-├── run.sh                           # One-Click Execution Script
-└── pyproject.toml                   # Project Configuration
+├── extensions/                        # Optional add-on modules
+│   └── aylm_mlx_vlm/                   # MLX-VLM training demo + signal export
+├── src/aylm/                           # Core Package
+│   ├── cli.py                          # CLI (setup, predict, voxelize, process, pipeline, video, demo, nav-demo, serve)
+│   ├── api/                            # External API Module
+│   │   ├── session.py                  # ConstitutionSession (stateful evaluation)
+│   │   └── app.py                      # FastAPI HTTP + WebSocket server
+│   ├── navigation_demo/                # Offline navigation demo package
+│   │   ├── config.py                   # Demo runtime configuration
+│   │   ├── artifacts.py                # Artifact pairing + scene summarization
+│   │   ├── providers.py                # Heuristic / MLX-VLM command proposers
+│   │   ├── overlay.py                  # Annotated result video renderer
+│   │   ├── runner.py                   # End-to-end offline demo orchestration
+│   │   ├── calibrator.py              # Session-level self-calibrator (threshold/weight/hint adjustment)
+│   │   ├── learning_store.py          # Cross-session learning persistence (JSON)
+│   │   └── prompt_calibrator.py       # Violation-to-prompt safety hint translator
+│   ├── constitution/                   # Constitutional AI Module
+│   │   ├── base.py                     # ConstitutionPrinciple abstract base
+│   │   ├── evaluator.py               # ConstitutionEvaluator orchestrator
+│   │   ├── validator.py               # CommandValidator (top-level API)
+│   │   ├── command_parser.py           # CommandParser + JSON/NL parsers
+│   │   ├── types.py                    # SceneState, AIDecision, EgoState
+│   │   ├── config.py                   # ConstitutionConfig (YAML/JSON)
+│   │   ├── registry.py                # ConstitutionRegistry plugin system
+│   │   ├── scorer.py                   # SafetyScorer abstract base
+│   │   ├── weighted_scorer.py          # WeightedSafetyScorer implementation
+│   │   ├── training.py                # TrainingSignalGenerator abstract base
+│   │   ├── default_generator.py        # DefaultTrainingSignalGenerator
+│   │   ├── adapter.py                  # ConstitutionObstacle adapter
+│   │   └── principles/                 # Built-in safety principles
+│   │       ├── collision.py            # NoCollisionPrinciple
+│   │       ├── ttc.py                  # TTCSafetyPrinciple
+│   │       ├── following.py            # SafeFollowingPrinciple
+│   │       ├── lane.py                 # LaneCompliancePrinciple
+│   │       └── speed.py               # SpeedLimitPrinciple
+│   └── tools/                          # Processing Modules
+│       ├── pipeline_processor.py       # Parallel Pipeline Orchestration
+│       ├── video_pipeline.py           # Video Sequence Processing + Tracking
+│       ├── video_extractor.py          # Video Frame Extraction (producer-consumer)
+│       ├── video_config.py             # Video Pipeline Configuration
+│       ├── video_types.py              # Video Pipeline Data Types
+│       ├── pointcloud_voxelizer.py     # Occupancy 2.0 Voxelization
+│       ├── semantic_fusion.py          # 2D→3D Semantic Projection
+│       ├── semantic_types.py           # Semantic Label Definitions
+│       ├── object_detector.py          # YOLO Instance Segmentation
+│       ├── obstacle_marker.py          # DBSCAN Obstacle Clustering
+│       ├── object_tracker.py           # ByteTrack Multi-Object Tracking
+│       ├── motion_estimator.py         # Kalman-filtered Motion Estimation
+│       ├── multiframe_fusion.py        # Multi-frame Point Cloud Registration
+│       ├── pointcloud_slicer.py        # Spatial ROI Extraction
+│       ├── coordinate_utils.py         # CV↔Robot Coordinate Transform
+│       ├── json_utils.py               # numpy-safe JSON serialization
+│       ├── voxel_player.py             # Voxel Sequence Visualization Player
+│       ├── constitution_integration.py # Constitution ↔ Pipeline bridge
+│       └── constitution_demo.py        # Interactive constitution demo
+├── ml-sharp/                           # Apple SHARP Model (submodule)
+├── local_only/                         # Local-only workspace (skeleton tracked, content ignored)
+├── models/                             # Model Checkpoints
+├── configs/                            # Configuration Files
+│   └── constitution_example.yaml       # Example constitution config
+├── inputs/                             # Input Data
+│   ├── input_images/                   # RGB Images
+│   └── videos/                         # Video Files
+├── outputs/                            # Output Data
+│   ├── output_gaussians/               # 3DGS Point Clouds
+│   ├── voxelized/                      # Occupancy Grids + Obstacle JSONs
+│   ├── detections/                     # Detection Results
+│   └── video_output/                   # Video Pipeline Output
+├── tests/                              # Test Suite (420+ tests)
+├── run.sh                              # One-Click Execution Script
+└── pyproject.toml                      # Project Configuration
 ```
+
+### 9.1 Local-only workspace convention
+
+Use `local_only/` for files that should stay local and not be uploaded:
+
+- Research drafts and personal notes
+- Local test datasets and media
+- Temporary benchmark scripts/results
+- Local run outputs and archived artifacts
+
+Current policy:
+- Track directory skeleton (`README_LOCAL.md`, `.gitkeep`) for team consistency
+- Ignore actual private content via `.gitignore`
 
 ---
 
 ## 10. Future Work
 
 ### 10.1 Advanced Safety Learning
-Implementation of reinforcement learning for adaptive safety boundary optimization.
+Online self-calibration with threshold/weight/hint adjustment is implemented. Future work includes full reinforcement learning for adaptive safety boundary optimization with model fine-tuning.
 
 ### 10.2 Multi-Sensor Fusion
 Integration with LiDAR for enhanced geometric accuracy in safety-critical scenarios.
@@ -708,15 +1279,29 @@ ruff check src/aylm tests
 mypy src/aylm
 ```
 
+### 11.3 CI Checks
+
+Current CI includes:
+
+- Unit tests (`ubuntu-latest`, `macos-latest`, Python 3.11)
+- `run.sh` smoke checks (`ubuntu-latest`, Python 3.11 / 3.12):
+  - `./run.sh --check-only`
+  - `./run.sh --demo`
+- Lint and format checks (`black`, `isort`, `ruff`, `mypy`)
+
 ---
 
 ## 12. Troubleshooting
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| Open3D installation failed | Python 3.13 incompatibility | Use Python 3.11 |
+| `pip install -e ml-sharp/` failed in first run | Submodule not initialized | Run `git submodule update --init --recursive` |
+| `run.sh` reports unsupported Python version | Using Python outside 3.11/3.12 | Use Python 3.11 or 3.12 and recreate venv |
+| `./run.sh` found no image/video in auto mode | No real files in `inputs/input_images` or `inputs/videos` | Add input files, or run `./run.sh --demo` first |
+| Open3D installation failed | Python version incompatibility | Use Python 3.11 or 3.12 |
 | YOLO model not found | First-time download | Run `pip install ultralytics` |
 | SHARP model download failed | Network issue | Manual download from Apple CDN |
+| Dependency install fails on first setup | Network / DNS / mirror issue | Check connectivity to GitHub/PyPI and retry |
 | Out of memory | Large point cloud | Increase `voxel_size` or use `--slice-radius` |
 | CUDA/MPS unavailable | Driver issue | Check `torch.cuda.is_available()` |
 
@@ -728,6 +1313,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
+- **Anthropic** - Constitutional AI paradigm that inspired this work
 - **Apple Inc.** - SHARP Vision Transformer model and research
 - **Ultralytics** - YOLO object detection framework
 - **Open3D Community** - Point cloud processing library
@@ -746,16 +1332,6 @@ If you use A-YLM in your research, please cite:
   note={Self-supervised safety framework extending Constitutional AI to physical world}
 }
 ```
-
----
-
-## Acknowledgments
-
-- **Anthropic** - Constitutional AI paradigm that inspired this work
-- **Apple Inc.** - SHARP Vision Transformer model and research
-- **Ultralytics** - YOLO object detection framework
-- **Open3D Community** - Point cloud processing library
-- **PyTorch Team** - Deep learning framework
 
 ---
 

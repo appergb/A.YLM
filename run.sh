@@ -9,6 +9,7 @@ cd "$SCRIPT_DIR"
 # 颜色定义
 RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m'
 BLUE='\033[0;34m' CYAN='\033[0;36m' NC='\033[0m'
+PYTHON_BIN="python3"
 
 # 文件扩展名模式
 IMAGE_EXTS='-iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.heic" -o -iname "*.webp" -o -iname "*.tiff" -o -iname "*.bmp"'
@@ -18,6 +19,61 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step() { echo -e "${BLUE}[STEP]${NC} $1"; }
 
+set_python_bin() {
+    if command -v python >/dev/null 2>&1; then
+        PYTHON_BIN="python"
+    else
+        PYTHON_BIN="python3"
+    fi
+}
+
+python_major_minor() {
+    "$1" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null
+}
+
+is_supported_python() {
+    local py_cmd="$1"
+    local major_minor
+    major_minor=$(python_major_minor "$py_cmd")
+    [[ "$major_minor" == "3.11" || "$major_minor" == "3.12" ]]
+}
+
+ensure_python_supported() {
+    local py_cmd="$1" context="$2"
+    local version_text
+    version_text=$("$py_cmd" --version 2>&1 || echo "unknown")
+    if ! is_supported_python "$py_cmd"; then
+        log_error "${context} 使用的 Python 版本不受支持: ${version_text}"
+        echo "  run.sh 当前仅支持 Python 3.11 或 3.12（Open3D 兼容性限制）"
+        return 1
+    fi
+}
+
+select_python_cmd() {
+    local candidate
+    for candidate in python3 python3.11 python3.12; do
+        command -v "$candidate" >/dev/null 2>&1 || continue
+        if is_supported_python "$candidate"; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+ensure_ml_sharp_submodule() {
+    local sharp_dir="$SCRIPT_DIR/ml-sharp"
+    local sharp_pyproject="$sharp_dir/pyproject.toml"
+    [[ -d "$sharp_dir" && -f "$sharp_pyproject" ]] && return 0
+
+    log_error "检测到 ml-sharp 子模块缺失或未初始化。"
+    echo "  请在仓库根目录执行："
+    echo "    git submodule update --init --recursive"
+    echo "  或重新克隆："
+    echo "    git clone --recursive <repo-url>"
+    exit 1
+}
+
 show_help() {
     cat << EOF
 ${CYAN}AYLM v2 - 3D Gaussian Splatting 点云处理工具${NC}
@@ -26,6 +82,7 @@ ${CYAN}AYLM v2 - 3D Gaussian Splatting 点云处理工具${NC}
 
 ${YELLOW}处理选项:${NC}
   -h, --help        显示帮助信息
+  --demo            宪法评估演示（无需模型/图像）
   --setup           设置环境并下载模型
   --voxelize        体素化处理
   --predict         预测流程
@@ -66,12 +123,22 @@ ${YELLOW}目标跟踪选项:${NC}
   --track           启用目标跟踪 (默认)
   --no-track        禁用目标跟踪
 
+${YELLOW}宪法安全评估选项:${NC}
+  --no-constitution       禁用宪法安全评估
+  --constitution-config   宪法配置文件路径(YAML/JSON)
+  --ego-speed             自车速度/m/s (默认: 0.0)
+  --ego-heading           自车航向/弧度 (默认: 0.0)
+
 ${YELLOW}示例:${NC}
-  ./run.sh --setup                    # 初始化
+  ./run.sh --check-only                 # 仅检查环境
+  ./run.sh --demo                       # 宪法评估演示
+  ./run.sh --setup                      # 初始化/下载模型
   ./run.sh -i ./images                # 处理图像
   ./run.sh --video -i video.mp4       # 处理视频
   ./run.sh --semantic -i ./images     # 启用语义检测
   ./run.sh --slice-radius 5.0         # 设置切片半径
+  ./run.sh --ego-speed 10.0 -i ./images  # 设置自车速度
+  ./run.sh --no-constitution -i ./images # 禁用宪法评估
 EOF
 }
 
@@ -82,10 +149,59 @@ find_venv() {
     return 1
 }
 
+init_conda_shell() {
+    local conda_bin="${CONDA_EXE:-}"
+
+    if [[ -z "$conda_bin" || ! -x "$conda_bin" ]]; then
+        if command -v conda >/dev/null 2>&1; then
+            conda_bin="$(command -v conda)"
+        elif [[ -x "/opt/homebrew/Caskroom/miniforge/base/bin/conda" ]]; then
+            conda_bin="/opt/homebrew/Caskroom/miniforge/base/bin/conda"
+        else
+            return 1
+        fi
+    fi
+
+    eval "$("$conda_bin" shell.bash hook)" >/dev/null 2>&1
+}
+
+find_project_conda_env() {
+    local candidate
+    for candidate in \
+        "$SCRIPT_DIR/.conda/aylm-macos-mps" \
+        "$SCRIPT_DIR/.conda/aylm-linux" \
+        "$SCRIPT_DIR/.conda/aylm-windows"
+    do
+        [[ -x "$candidate/bin/python" ]] || continue
+        echo "$candidate"
+        return 0
+    done
+    return 1
+}
+
+activate_conda_env() {
+    local env_path="$1"
+    [[ -x "$env_path/bin/python" ]] || {
+        log_error "无法激活 conda 环境: $env_path"
+        exit 1
+    }
+
+    init_conda_shell || {
+        log_error "检测到项目 conda 环境，但无法初始化 conda shell。"
+        echo "  请确认已安装 Miniforge/conda。"
+        exit 1
+    }
+
+    conda activate "$env_path"
+    set_python_bin
+    log_info "已激活项目 conda 环境: $env_path"
+}
+
 activate_venv() {
     local venv_path="$1"
     [[ -f "$venv_path/bin/activate" ]] || { log_error "无法激活虚拟环境: $venv_path"; exit 1; }
     source "$venv_path/bin/activate"
+    set_python_bin
     log_info "已激活虚拟环境: $venv_path"
 }
 
@@ -96,24 +212,52 @@ check_and_install_deps() {
         local import_name="$dep"
         [[ "$dep" == "Pillow" ]] && import_name="PIL"
         [[ "$dep" == "opencv-python" ]] && import_name="cv2"
-        python3 -c "import $import_name" 2>/dev/null || missing+=("$dep")
+        "$PYTHON_BIN" -c "import $import_name" 2>/dev/null || missing+=("$dep")
     done
 
-    [[ ${#missing[@]} -gt 0 ]] && { log_info "安装: ${missing[*]}"; pip install --quiet "${missing[@]}"; }
-    python3 -c "import aylm" 2>/dev/null || pip install --quiet -e .
-    [[ -d "$SCRIPT_DIR/ml-sharp" ]] && python3 -c "import sharp" 2>/dev/null || pip install --quiet -e "$SCRIPT_DIR/ml-sharp/"
+    [[ ${#missing[@]} -gt 0 ]] && { log_info "安装: ${missing[*]}"; "$PYTHON_BIN" -m pip install --quiet "${missing[@]}"; }
+    "$PYTHON_BIN" -c "import aylm" 2>/dev/null || "$PYTHON_BIN" -m pip install --quiet -e .
+    if [[ -f "$SCRIPT_DIR/ml-sharp/pyproject.toml" ]]; then
+        "$PYTHON_BIN" -c "import sharp" 2>/dev/null || "$PYTHON_BIN" -m pip install --quiet -e "$SCRIPT_DIR/ml-sharp/"
+    fi
 }
 
 setup_env() {
-    local venv_path
+    local venv_path python_cmd conda_env
+
+    if [[ -n "${CONDA_PREFIX:-}" ]] && is_supported_python python; then
+        set_python_bin
+        log_info "检测到已激活的 conda 环境: $CONDA_PREFIX"
+        check_and_install_deps
+        return 0
+    fi
+
+    if conda_env=$(find_project_conda_env); then
+        activate_conda_env "$conda_env"
+        ensure_python_supported python "conda 环境" || exit 1
+        check_and_install_deps
+        return 0
+    fi
+
     if venv_path=$(find_venv); then
         log_info "找到虚拟环境: $venv_path"
+        activate_venv "$venv_path"
+        ensure_python_supported python3 "虚拟环境" || {
+            echo "  请删除当前虚拟环境并使用 Python 3.11/3.12 重新创建。"
+            exit 1
+        }
     else
         venv_path="$SCRIPT_DIR/aylm_env"
-        log_info "创建虚拟环境: $venv_path"
-        python3 -m venv "$venv_path"
+        if ! python_cmd=$(select_python_cmd); then
+            log_error "未找到受支持的 Python 版本（3.11/3.12）。"
+            command -v python3 >/dev/null 2>&1 && echo "  当前默认: $(python3 --version 2>&1)"
+            echo "  请安装 Python 3.11 或 3.12，并确保 python3.11 / python3.12 可用。"
+            exit 1
+        fi
+        log_info "创建虚拟环境: $venv_path (使用 $python_cmd)"
+        "$python_cmd" -m venv "$venv_path"
+        activate_venv "$venv_path"
     fi
-    activate_venv "$venv_path"
     check_and_install_deps
 }
 
@@ -130,13 +274,13 @@ show_banner() {
     echo -e "${CYAN}============================================================${NC}\n"
 }
 
-run_voxelize() { log_step "体素化处理..."; python3 -m aylm.cli voxelize "$@"; }
-run_predict() { log_step "预测流程..."; python3 -m aylm.cli predict "$@"; }
-run_full() { log_step "完整流程（顺序）..."; python3 -m aylm.cli process "$@"; }
-run_pipeline() { log_step "流水线处理（并行）..."; python3 -m aylm.cli pipeline "$@"; }
-run_video_process() { log_step "视频处理..."; python3 -m aylm.cli video process "$@"; }
-run_video_extract() { log_step "提取视频帧..."; python3 -m aylm.cli video extract "$@"; }
-run_video_play() { log_step "播放体素序列..."; python3 -m aylm.cli video play "$@"; }
+run_voxelize() { log_step "体素化处理..."; "$PYTHON_BIN" -m aylm.cli voxelize "$@"; }
+run_predict() { log_step "预测流程..."; "$PYTHON_BIN" -m aylm.cli predict "$@"; }
+run_full() { log_step "完整流程（顺序）..."; "$PYTHON_BIN" -m aylm.cli process "$@"; }
+run_pipeline() { log_step "流水线处理（并行）..."; "$PYTHON_BIN" -m aylm.cli pipeline "$@"; }
+run_video_process() { log_step "视频处理..."; "$PYTHON_BIN" -m aylm.cli video process "$@"; }
+run_video_extract() { log_step "提取视频帧..."; "$PYTHON_BIN" -m aylm.cli video extract "$@"; }
+run_video_play() { log_step "播放体素序列..."; "$PYTHON_BIN" -m aylm.cli video play "$@"; }
 
 run_auto() {
     local input_dir="$1"; shift
@@ -153,9 +297,10 @@ run_auto() {
         local first_video=$(eval "find inputs/videos -maxdepth 1 -type f \( $VIDEO_EXTS \) 2>/dev/null | head -1")
         [[ -n "$first_video" ]] && run_video_process -i "$first_video" -o "outputs/video_output" "$@"
     else
-        log_error "未找到图像或视频文件"
+        log_info "未检测到可处理输入，默认模式不会自动运行完整流程。"
         echo "  请将文件放入: $input_dir 或 inputs/videos/"
-        exit 1
+        echo "  或先运行演示模式验证环境: ./run.sh --demo"
+        return 0
     fi
 }
 
@@ -166,11 +311,13 @@ main() {
     local semantic=true semantic_model="yolo11n-seg.pt" semantic_confidence="0.25"
     local slice=true slice_radius="10.0"
     local track=true
+    # 宪法评估参数（默认启用）
+    local constitution=true constitution_config="" ego_speed="0.0" ego_heading="0.0"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help) show_help; exit 0 ;;
-            --setup|--voxelize|--predict|--full|--pipeline|--auto|--video|--video-extract|--video-play)
+            --demo|--setup|--voxelize|--predict|--full|--pipeline|--auto|--video|--video-extract|--video-play)
                 action="${1#--}"; shift ;;
             -i|--input) input_dir="$2"; extra_args+=("-i" "$2"); shift 2 ;;
             -o|--output) output_dir="$2"; extra_args+=("-o" "$2"); shift 2 ;;
@@ -193,15 +340,21 @@ main() {
             # 跟踪参数
             --track) track=true; shift ;;
             --no-track) track=false; shift ;;
+            # 宪法评估参数
+            --no-constitution) constitution=false; shift ;;
+            --constitution-config) constitution_config="$2"; shift 2 ;;
+            --ego-speed) ego_speed="$2"; shift 2 ;;
+            --ego-heading) ego_heading="$2"; shift 2 ;;
             *) extra_args+=("$1"); shift ;;
         esac
     done
 
+    ensure_ml_sharp_submodule
     setup_env
 
     if [[ "$check_only" == true ]]; then
         show_banner "环境检查"
-        echo "  Python: $(python3 --version) | 图像: $(count_files "$input_dir" "$IMAGE_EXTS") | 视频: $(count_files "inputs/videos" "$VIDEO_EXTS")"
+        echo "  Python: $("$PYTHON_BIN" --version) | 图像: $(count_files "$input_dir" "$IMAGE_EXTS") | 视频: $(count_files "inputs/videos" "$VIDEO_EXTS")"
         [[ -f "$SCRIPT_DIR/models/sharp_2572gikvuh.pt" ]] && echo -e "  模型: ${GREEN}已下载${NC}" || echo -e "  模型: ${YELLOW}未下载${NC}"
         exit 0
     fi
@@ -228,17 +381,27 @@ main() {
         track_args+=("--no-track")
     fi
 
+    # 构建宪法评估参数
+    local constitution_args=()
+    if [[ "$constitution" == true ]]; then
+        constitution_args+=("--ego-speed" "$ego_speed" "--ego-heading" "$ego_heading")
+        [[ -n "$constitution_config" ]] && constitution_args+=("--constitution-config" "$constitution_config")
+    else
+        constitution_args+=("--no-constitution")
+    fi
+
     case "$action" in
-        setup) log_step "下载模型..."; python3 -m aylm.cli setup --download ;;
+        demo) show_banner "宪法评估演示"; "$PYTHON_BIN" -m aylm.cli demo "${extra_args[@]}" ;;
+        setup) log_step "下载模型..."; "$PYTHON_BIN" -m aylm.cli setup --download ;;
         voxelize) run_voxelize "${extra_args[@]}" ;;
         predict) run_predict "${extra_args[@]}" ;;
         full) run_full "${extra_args[@]}" ;;
-        pipeline) run_pipeline "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" ;;
+        pipeline) run_pipeline "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" "${constitution_args[@]}" ;;
         video)
             local video_args=("${extra_args[@]}")
             [[ -n "$config_file" ]] && video_args+=("-c" "$config_file")
             [[ "$use_gpu" == true ]] && video_args+=("--use-gpu")
-            video_args+=("${semantic_args[@]}" "${slice_args[@]}" "${track_args[@]}")
+            video_args+=("${semantic_args[@]}" "${slice_args[@]}" "${track_args[@]}" "${constitution_args[@]}")
             show_banner "视频处理"
             run_video_process "${video_args[@]}" ;;
         video-extract)
@@ -250,7 +413,7 @@ main() {
             local play_args=("-i" "$input_dir" "--fps" "$fps")
             [[ "$loop" == true ]] && play_args+=("--loop")
             run_video_play "${play_args[@]}" ;;
-        auto) run_auto "$input_dir" "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" "${track_args[@]}" ;;
+        auto) run_auto "$input_dir" "${extra_args[@]}" "${semantic_args[@]}" "${slice_args[@]}" "${track_args[@]}" "${constitution_args[@]}" ;;
     esac
 
     log_info "完成"

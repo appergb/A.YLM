@@ -35,8 +35,8 @@ class EgoState:
         return {
             "position": self.position.tolist(),
             "velocity": self.velocity.tolist(),
-            "heading": self.heading,
-            "speed": self.speed,
+            "heading": float(self.heading),
+            "speed": float(self.speed),
             "acceleration": (
                 self.acceleration.tolist() if self.acceleration is not None else None
             ),
@@ -53,6 +53,24 @@ class TrajectoryPoint:
     position: NDArray[np.float32]  # [x, y, z]
     velocity: NDArray[np.float32] | None = None  # [vx, vy, vz]
     timestamp: float = 0.0  # 相对时间（秒）
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "TrajectoryPoint":
+        """从字典创建。
+
+        支持格式：
+        - {"position": [x,y,z], "velocity": [vx,vy,vz], "timestamp": t}
+        - {"position": [x,y,z], "timestamp": t}
+        """
+        pos = np.array(data["position"], dtype=np.float32)
+        vel = None
+        if data.get("velocity") is not None:
+            vel = np.array(data["velocity"], dtype=np.float32)
+        return cls(
+            position=pos,
+            velocity=vel,
+            timestamp=float(data.get("timestamp", 0.0)),
+        )
 
 
 @dataclass
@@ -94,6 +112,29 @@ class AIDecision:
             "confidence": self.confidence,
             "metadata": self.metadata,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AIDecision":
+        """从字典创建（支持外部 JSON 输入）。
+
+        Args:
+            data: 包含 decision_type, trajectory, control 等字段的字典
+
+        Returns:
+            AIDecision 实例
+        """
+        trajectory = []
+        for pt in data.get("trajectory", []):
+            trajectory.append(TrajectoryPoint.from_dict(pt))
+
+        return cls(
+            decision_type=data.get("decision_type", "trajectory"),
+            trajectory=trajectory,
+            control=data.get("control", {}),
+            target_speed=data.get("target_speed"),
+            confidence=data.get("confidence", 1.0),
+            metadata=data.get("metadata", {}),
+        )
 
 
 @dataclass

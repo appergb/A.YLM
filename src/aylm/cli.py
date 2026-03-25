@@ -27,12 +27,26 @@ def get_version() -> str:
         return "2.0.0"
 
 
+def _find_project_root(start: Path) -> Path | None:
+    """向上查找 pyproject.toml 以定位项目根目录。"""
+    current = start if start.is_dir() else start.parent
+    for parent in [current, *current.parents]:
+        if (parent / "pyproject.toml").exists():
+            return parent
+    return None
+
+
 def get_project_root() -> Path:
     """获取项目根目录."""
     if root := os.environ.get("AYLM_ROOT"):
         return Path(root)
-    current = Path(__file__).resolve().parents[3]
-    return current if (current / "pyproject.toml").exists() else Path.cwd()
+
+    file_root = _find_project_root(Path(__file__).resolve())
+    if file_root is not None:
+        return file_root
+
+    cwd_root = _find_project_root(Path.cwd())
+    return cwd_root if cwd_root is not None else Path.cwd()
 
 
 def get_model_path() -> Path:
@@ -336,6 +350,10 @@ def cmd_video_process(args: argparse.Namespace) -> int:
         enable_tracking = getattr(args, "track", True) and not getattr(
             args, "no_track", False
         )
+        # 解析宪法评估选项
+        enable_constitution = getattr(args, "constitution", True) and not getattr(
+            args, "no_constitution", False
+        )
 
         pipeline_config = VideoPipelineConfig(
             video_config=config,
@@ -348,6 +366,14 @@ def cmd_video_process(args: argparse.Namespace) -> int:
             enable_slice=enable_slice,
             slice_radius=getattr(args, "slice_radius", 10.0),
             enable_tracking=enable_tracking,
+            enable_constitution=enable_constitution,
+            constitution_config_path=(
+                Path(args.constitution_config)
+                if getattr(args, "constitution_config", None)
+                else None
+            ),
+            ego_speed=getattr(args, "ego_speed", 0.0),
+            ego_heading=getattr(args, "ego_heading", 0.0),
         )
         stats = VideoPipelineProcessor(pipeline_config).process(video_path, output_dir)
 
@@ -511,6 +537,9 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
     # 解析语义检测和切片选项
     enable_semantic = args.semantic and not getattr(args, "no_semantic", False)
     enable_slice = args.slice and not getattr(args, "no_slice", False)
+    enable_constitution = args.constitution and not getattr(
+        args, "no_constitution", False
+    )
 
     print("\n[配置]")
     print(f"  体素尺寸: {args.voxel_size}m")
@@ -523,6 +552,9 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
     print(f"  点云切片: {'是' if enable_slice else '否'}")
     if enable_slice:
         print(f"    半径: {args.slice_radius}m")
+    print(f"  宪法评估: {'是' if enable_constitution else '否'}")
+    if enable_constitution and args.ego_speed > 0:
+        print(f"    自车速度: {args.ego_speed}m/s")
     print(f"  详细输出: {'是' if verbose else '否'}")
 
     print("\n[流水线策略]")
@@ -548,6 +580,12 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
             semantic_confidence=args.semantic_confidence,
             enable_slice=enable_slice,
             slice_radius=args.slice_radius,
+            enable_constitution=enable_constitution,
+            constitution_config_path=(
+                Path(args.constitution_config) if args.constitution_config else None
+            ),
+            ego_speed=args.ego_speed,
+            ego_heading=args.ego_heading,
         )
         stats = PipelineProcessor(config).process(input_dir, output_dir)
 
@@ -568,6 +606,112 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
         return 1
     except Exception as e:
         logger.error(f"流水线处理失败: {e}")
+        return 1
+
+
+def cmd_demo(args: argparse.Namespace) -> int:
+    """运行宪法评估演示."""
+    try:
+        from aylm.tools.constitution_demo import run_demo
+
+        return run_demo(verbose=args.verbose)
+    except ImportError as e:
+        logger.error(f"导入演示模块失败: {e}")
+        return 1
+    except Exception as e:
+        logger.error(f"演示运行失败: {e}")
+        return 1
+
+
+def cmd_nav_demo(args: argparse.Namespace) -> int:
+    """运行离线视频导航演示."""
+    print(f"AYLM v{get_version()} - 离线视频导航演示\n")
+
+    artifacts_dir = Path(args.input)
+    if not artifacts_dir.exists():
+        logger.error(f"输入目录不存在: {artifacts_dir}")
+        return 1
+
+    output_dir = (
+        Path(args.output) if args.output else get_project_root() / "outputs/nav_demo"
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"[输入] {artifacts_dir}")
+    print(f"[输出] {output_dir}")
+    print(f"[Provider] {args.provider}")
+    if args.provider == "mlx-vlm":
+        print(f"[Model] {args.model}")
+    print(f"[窗口] size={args.window_size}, stride={args.window_stride}")
+    print(f"[批准阈值] {args.threshold}")
+    print(f"[自车初始速度] {args.ego_speed}m/s")
+    print("=" * 50)
+
+    try:
+        from aylm.navigation_demo import NavigationDemoConfig, NavigationDemoRunner
+
+        config = NavigationDemoConfig(
+            artifacts_dir=artifacts_dir,
+            output_dir=output_dir,
+            provider=args.provider,
+            model_name=args.model,
+            window_size=args.window_size,
+            window_stride=args.window_stride,
+            max_frames=args.max_frames,
+            approval_threshold=args.threshold,
+            ego_speed=args.ego_speed,
+            ego_heading=args.ego_heading,
+            overlay_fps=args.overlay_fps,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            prompt_file=Path(args.prompt_file) if args.prompt_file else None,
+            render_video=not args.no_render,
+        )
+        summary = NavigationDemoRunner(config).run()
+
+        print("[完成] 导航演示结束")
+        print(f"  总帧数: {summary['total_frames']}")
+        print(f"  决策数: {summary['decision_count']}")
+        print(f"  提案通过数: {summary['approved_proposal_count']}")
+        print(f"  兜底次数: {summary['fallback_count']}")
+        print(f"  平均执行安全分: {summary['avg_executed_score']:.2f}")
+        print(f"  最低执行安全分: {summary['min_executed_score']:.2f}")
+        print(f"  最终趋势: {summary['final_trend']}")
+        print(f"  指令日志: {summary['command_log']}")
+        if summary["rendered_video"]:
+            print(f"  结果视频: {summary['rendered_video']}")
+        return 0
+
+    except ImportError as e:
+        logger.error(f"导入导航演示模块失败: {e}")
+        if args.provider == "mlx-vlm":
+            logger.error("MLX-VLM 模式需要先安装: pip install -e '.[navdemo]'")
+        return 1
+    except Exception as e:
+        logger.error(f"导航演示运行失败: {e}")
+        return 1
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    """启动宪法评估 API 服务."""
+    try:
+        from aylm.api.app import run_server
+
+        run_server(
+            host=args.host,
+            port=args.port,
+            ego_speed=args.ego_speed,
+            ego_heading=args.ego_heading,
+            approval_threshold=args.threshold,
+            config_path=args.constitution_config,
+        )
+        return 0
+    except ImportError as e:
+        logger.error(f"API 依赖缺失: {e}")
+        logger.error("安装: pip install 'aylm[api]'  或  pip install fastapi uvicorn")
+        return 1
+    except Exception as e:
+        logger.error(f"API 服务启动失败: {e}")
         return 1
 
 
@@ -679,6 +823,19 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("--slice", action="store_true", default=True, help="启用点云切片")
     p.add_argument("--no-slice", action="store_true", help="禁用点云切片")
     p.add_argument("--slice-radius", type=float, default=10.0, help="切片半径(米)")
+    # 宪法安全评估选项
+    p.add_argument(
+        "--constitution",
+        action="store_true",
+        default=True,
+        help="启用宪法安全评估（默认开启）",
+    )
+    p.add_argument("--no-constitution", action="store_true", help="禁用宪法安全评估")
+    p.add_argument(
+        "--constitution-config", type=str, help="宪法配置文件路径(YAML/JSON)"
+    )
+    p.add_argument("--ego-speed", type=float, default=0.0, help="自车速度(m/s)")
+    p.add_argument("--ego-heading", type=float, default=0.0, help="自车航向(弧度)")
     p.add_argument(
         "-v",
         "--verbose",
@@ -715,6 +872,19 @@ def create_parser() -> argparse.ArgumentParser:
     # 目标跟踪选项
     p.add_argument("--track", action="store_true", default=True, help="启用目标跟踪")
     p.add_argument("--no-track", action="store_true", help="禁用目标跟踪")
+    # 宪法安全评估选项
+    p.add_argument(
+        "--constitution",
+        action="store_true",
+        default=True,
+        help="启用宪法安全评估（默认开启）",
+    )
+    p.add_argument("--no-constitution", action="store_true", help="禁用宪法安全评估")
+    p.add_argument(
+        "--constitution-config", type=str, help="宪法配置文件路径(YAML/JSON)"
+    )
+    p.add_argument("--ego-speed", type=float, default=0.0, help="自车速度(m/s)")
+    p.add_argument("--ego-heading", type=float, default=0.0, help="自车航向(弧度)")
     p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
     p.set_defaults(func=cmd_video_process)
 
@@ -734,6 +904,67 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("--loop", action="store_true", help="循环播放")
     p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
     p.set_defaults(func=cmd_video_play)
+
+    # demo - 宪法评估演示
+    p = subs.add_parser("demo", help="宪法式 AI 安全评估演示")
+    p.add_argument("-v", "--verbose", action="store_true", help="显示完整 JSON 结果")
+    p.set_defaults(func=cmd_demo)
+
+    # nav-demo - 离线视频导航演示
+    p = subs.add_parser("nav-demo", help="从 `aylm video process` 产物运行离线导航演示")
+    p.add_argument("-i", "--input", required=True, help="`aylm video process` 输出目录")
+    p.add_argument("-o", "--output", help="导航演示输出目录")
+    p.add_argument(
+        "--provider",
+        choices=["mlx-vlm", "heuristic"],
+        default="heuristic",
+        help="导航指令生成器（默认 heuristic）",
+    )
+    p.add_argument(
+        "--model",
+        default="mlx-community/SmolVLM2-500M-Video-Instruct-mlx",
+        help="MLX-VLM 模型名称或本地路径",
+    )
+    p.add_argument("--window-size", type=int, default=4, help="每次推理使用的帧数")
+    p.add_argument("--window-stride", type=int, default=2, help="决策窗口步长")
+    p.add_argument("--max-frames", type=int, help="最多读取多少帧")
+    p.add_argument("--threshold", type=float, default=0.6, help="安全分批准阈值")
+    p.add_argument("--ego-speed", type=float, default=1.0, help="初始自车速度(m/s)")
+    p.add_argument("--ego-heading", type=float, default=0.0, help="初始自车航向(弧度)")
+    p.add_argument("--overlay-fps", type=float, default=4.0, help="结果视频帧率")
+    p.add_argument(
+        "--max-tokens",
+        type=int,
+        default=256,
+        help="MLX-VLM 最大生成 token 数",
+    )
+    p.add_argument(
+        "--temperature",
+        type=float,
+        default=0.0,
+        help="MLX-VLM 采样温度（默认 0.0）",
+    )
+    p.add_argument("--prompt-file", help="自定义 prompt 文件路径")
+    p.add_argument(
+        "--no-render",
+        action="store_true",
+        help="只输出决策日志和摘要，不渲染结果视频",
+    )
+    p.set_defaults(func=cmd_nav_demo)
+
+    # serve - 宪法评估 API 服务
+    p = subs.add_parser("serve", help="启动宪法评估 API 服务")
+    p.add_argument("--host", default="0.0.0.0", help="监听地址(默认0.0.0.0)")
+    p.add_argument("--port", type=int, default=8000, help="监听端口(默认8000)")
+    p.add_argument("--ego-speed", type=float, default=0.0, help="初始自车速度(m/s)")
+    p.add_argument("--ego-heading", type=float, default=0.0, help="初始自车航向(弧度)")
+    p.add_argument(
+        "--threshold", type=float, default=0.6, help="安全分批准阈值(默认0.6)"
+    )
+    p.add_argument(
+        "--constitution-config", type=str, help="宪法配置文件路径(YAML/JSON)"
+    )
+    p.set_defaults(func=cmd_serve)
 
     # fuse - 多帧点云融合
     p = subs.add_parser("fuse", help="多帧点云配准融合")
